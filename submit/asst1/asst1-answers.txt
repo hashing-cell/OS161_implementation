@@ -34,3 +34,171 @@ Date:   Mon Sep 12 16:20:09 2022 -0700
 
 --------------------------GIT TAG OUTPUT--------------------------
 asst1-start
+
+--------------------------CODE READING EXERCISES--------------------------
+
+QUESTION 1:
+The first line of OS161 code that is executed is in "src/kern/arch/mips/locore/exception-mips1.S" on either line 69 or line 87 where it jumps to "j common_exception". Then in the function "common_exception" in the same file, it calls "mips_trap()" in "trap.c". Then, depending on the what caused the exception, it will handle it accordingly. If the cause of the trap was due to an interrupt, it will call the interrupt handler code "mainbus_interrupt()", it is handled in the same place as all other traps.
+
+QUESTION 2:
+In the file "src/userland/lib/libc/arch/mips/syscalls-mips.S", on line 84 where it does assembly instruction "syscall". 
+
+
+QUESTION 3. These are common libc functions which are common is all C programs, and they are used in both userland programs and kernel code. We need to compile these while building our kernel. The libc functions in common/libc are libc functions that both the kernel and userland programs use while the libc functions in /userland/lib/libc are libc functions that the kernel does not need, but are still part of the libc library and are written there for userland programs to use.
+
+QUESTION 4. The configure script configures the optimization level and debugging level used by the compiler for the user-level programs, and also configures the path for the system to be to be installed in after compilation. If you want to change the install location or the optimization level/debugging level of userland programs, then you may need to rerun the configure script with different arguments. Additionally, you may need to edit the configure script **directly** and then rerun, if you want to change the target platform (PLATFORM), target architecture (MACHINE), and/or compiler used (HOST_CC). 
+
+QUESTION 5. One thing that clearly makes a function or a piece of code machine-dependent is that it is written in assembly. In the .S files, they are written in MIPS assembly which clearly is not portable to other processors that run a different ISA like x86 or ARM. Some code also directly write to hardware registers, like the functions in "src/kern/arch/sys161/dev/lamebus_machdep.c", are also examples of machine-dependent code as writing to those specific memory address is dependent on the platform. It is important to maintain the separation of machine-dependent and machine-independent code for ease of maintenance. You want to be able to be able to quickly identify machine-dependent code so that it makes it easier to port to other hardware platforms
+
+QUESTION 6. The size of a trapframe contains 37 uint32_t types, which together is 148 bytes. The trapframe struct is defined in "src/kern/compile/DUMBVM/includelinks/mips/trapframe.h" on line 40. It is this large because there are 37 registers worth of values to store.
+
+QUESTION 7. The configure script should be rerun when source files have been added or removed. If there are any changes to kernel configuration, (eg. the current configuration at "src/kern/conf/DUMBVM" got changed), the configure script should also be rerun. 
+
+QUESTION 8. It should be rerun whenever the configure script mentioned in the last question was rerun.
+
+QUESTION 9. If any kernel-related code was modified, it should be rerun.
+
+QUESTION 10. We would implement a "Hello World" command in "src/kern/main/menu.c". Specifically, what we would need to do is to add another entry in "} cmdtable[] = {" on line 530, and implement the corresponding function that would do "kprintf("Hello world");" somewhere. An example implementation:
+
+static int cmd_helloworld(int n, char **a) {
+	kprintf("Hello World\n");
+	return 0;
+}
+
+
+static struct {
+	const char *name;
+	int (*func)(int nargs, char **args);
+} cmdtable[] = {
+/*...... stuff */
+    { "helloworld",		cmd_helloworld }
+
+/*more STuff*/
+}
+
+It would also be highly recommend to add the command into the menu display code, such as in "static const char *mainmenu[]", so that the user can be aware of the existence of such a command
+
+QUESTION 11. We need to include the stuff in userland instead of using our host system's libc because we need to compile the userland code targetting our actual hardware platform. We also need the libc to do syscalls in a manner that complies with OS161's syscall conventions, which may be different than our host machine. Our host machine's libc may also have much more system calls that our OS161 simply just doesn't implement.
+
+QUESTION 12. According to the code the "src/userland/lib/crt0/mips/crt0.S", which is the code that is invoked before a user C program runs, it just saves the return value of main, and that value is passed as an argument when it makes the "exit()" system call.
+
+QUESTION 13. We need to define a system call number to "src/kern/include/kern/syscall.h". Then implement the corresponding code in "src/kern/arch/mips/syscall/syscall.c" in the function "syscall(struct trapframe *tf)" in the switch statement, to handle a syscall with the number you just defined in the "src/kern/include/kern/syscall.h". 
+
+However, to conform better with the existing code of the OS codebase, it is best to add a function declaration for the system call to "src/kern/include/syscall.h", and then create a new source file in "src/kern/syscall/" that implements the new system call, and make the swtich statement in "syscall(struct trapframe *tf)" in file "src/kern/arch/mips/syscall/syscall.c" to call the function implemented in the new source file.
+
+We need to do the steps answered in question 7,8, and 9. If we added a new source file when implementing system call, we need to reconfigure kernel and run bmake depend. Then run bmake and bmake install. 
+
+QUESTION 14. The first function that starts up is at "kmain (arguments=0x80035c20 "") at ../../main/main.c:211".
+
+QUESTION 15. The very first assembly instruction (which happens before the first function), is at "__start () at ../../arch/sys161/main/start.S:54, addiu sp, sp, -24"
+
+QUESTION 16. Info breakpoints output: 
+
+Num     Type           Disp Enb Address    What
+1       breakpoint     keep y   0x800139e4 in kmain at ../../main/main.c:211
+2       breakpoint     keep y   0x80014a0c in menu at ../../main/menu.c:697
+
+QUESTION 17. Before kmain(), the program sets up the stack frame, sets up virtual memory map, copies exception handler code to the appropriate places in memory as specified in the lambbus documentation, initializes TLB, enables interrupts, and sets up the approrpriate registers to their correct values. After all this the assembly code invocates the kmain function
+
+QUESTION 18. Here is where the assembly code calls kmain()
+
+Breakpoint 3, __start () at ../../arch/sys161/main/start.S:215
+215	   jal kmain
+
+QUESTION 19. Output from GDB when stepping through boot():
+
+Breakpoint 1, kmain (arguments=0x80035c20 "") at ../../main/main.c:211
+211		boot();
+(gdb) s
+boot () at ../../main/main.c:99
+99		kprintf("\n");
+(gdb) n
+100		kprintf("OS/161 base system version %s\n", BASE_VERSION);
+(gdb) n
+101		kprintf("%s", harvard_copyright);
+(gdb) n
+102		kprintf("\n");
+(gdb) n
+104		kprintf("Put-your-group-name-here's system version %s (%s #%d)\n",
+(gdb) n
+106		kprintf("\n");
+(gdb) n
+109		ram_bootstrap();
+(gdb) n
+110		proc_bootstrap();
+(gdb) n
+111		thread_bootstrap();
+(gdb) n
+112		hardclock_bootstrap();
+(gdb) n
+113		vfs_bootstrap();
+(gdb) n
+114		kheap_nextgeneration();
+(gdb) n
+117		kprintf("Device probe...\n");
+(gdb) n
+118		KASSERT(curthread->t_curspl > 0);
+(gdb) n
+119		mainbus_bootstrap();
+(gdb) n
+120		KASSERT(curthread->t_curspl == 0);
+(gdb) n
+122		pseudoconfig();
+(gdb) n
+123		kprintf("\n");
+(gdb) n
+124		kheap_nextgeneration();
+(gdb) n
+127		vm_bootstrap();
+(gdb) n
+128		kprintf_bootstrap();
+(gdb) n
+129		thread_start_cpus();
+(gdb) n
+132		vfs_setbootfs("emu0");
+(gdb) n
+134		kheap_nextgeneration();
+(gdb) n
+141	}
+
+QUESTION 20. Attempt to print the output:
+ 
+(gdb) print bootcpu
+$2 = (struct cpu *) 0x80000
+(gdb) print *bootcpu
+Cannot access memory at address 0x80000
+
+QUESTION 21. Contents of *bootcpu
+
+(gdb) print *bootcpu
+$3 = {c_self = 0x8003af00, c_number = 0, c_hardware_number = 0, c_curthread = 0x8003bf80, c_zombies = {tl_head = {
+      tln_prev = 0x0, tln_next = 0x8003af1c, tln_self = 0x0}, tl_tail = {tln_prev = 0x8003af10, tln_next = 0x0, 
+      tln_self = 0x0}, tl_count = 0}, c_hardclocks = 0, c_spinlocks = 0, c_isidle = false, c_runqueue = {tl_head = {
+      tln_prev = 0x0, tln_next = 0x8003af44, tln_self = 0x0}, tl_tail = {tln_prev = 0x8003af38, tln_next = 0x0, 
+      tln_self = 0x0}, tl_count = 0}, c_runqueue_lock = {splk_lock = 0, splk_holder = 0x0}, c_ipi_pending = 0, 
+  c_shootdown = {{ts_placeholder = 0} <repeats 16 times>}, c_numshootdown = 0, c_ipi_lock = {splk_lock = 0, 
+    splk_holder = 0x0}}
+
+
+QUESTION 22. Output:
+
+(gdb) cpuarray allcpus
+0 cpus
+
+QUESTION 23. Output:
+
+(gdb) cpuarray allcpus
+1 cpus
+cpu 0:
+$1 = {c_self = 0x8003af00, c_number = 0, c_hardware_number = 0, c_curthread = 0x8003bf80, c_zombies = {tl_head = {
+      tln_prev = 0x0, tln_next = 0x8003af1c, tln_self = 0x0}, tl_tail = {tln_prev = 0x8003af10, tln_next = 0x0, 
+      tln_self = 0x0}, tl_count = 0}, c_hardclocks = 1, c_spinlocks = 0, c_isidle = false, c_runqueue = {tl_head = {
+      tln_prev = 0x0, tln_next = 0x8003af44, tln_self = 0x0}, tl_tail = {tln_prev = 0x8003af38, tln_next = 0x0, 
+      tln_self = 0x0}, tl_count = 0}, c_runqueue_lock = {splk_lock = 0, splk_holder = 0x0}, c_ipi_pending = 0, 
+  c_shootdown = {{ts_placeholder = 0} <repeats 16 times>}, c_numshootdown = 0, c_ipi_lock = {splk_lock = 0, 
+    splk_holder = 0x0}}
+
+
+
+
+
