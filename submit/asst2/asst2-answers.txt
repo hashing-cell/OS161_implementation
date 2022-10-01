@@ -1,0 +1,25 @@
+--------------------------CODE READING EXERCISES--------------------------
+
+1. When thread_exit() is called, what happens is that it detaches the thread from the current process and checks whether that operation was successful. Then it checks for any signs of stackflow. Then it turns interrupts off, and then it calls thread_switch() passing S_ZOMBIE as the parameter for its new state. The S_ZOMBIE state marks a thread as exited and finished, but not yet deleted. Then thread_switch gets the next thread to be run, or if there are no pending threads it puts the cpu to sleep. The other next thread that resumes will then clear the zombie list, which actually destroys this last thread. For the case of putting a thread to sleeps, thread_switch() is still called but with the S_WAIT parameter passed, to indicate that the thread is being be suspended and added to a wait channel, but not to be destroyed. During this process, it is locked by a spinlock. After being added to the wait channel list, we release the spnlock. 
+
+2. Thread_switch() is the machine-independent function that handles context switches, on line 560 in kern/thread/thread.c. The actual context switch though happens in the assembly function "switchframe_switch" in arch/mips/thread/switch.S, which is called within thread_switch().
+
+3. There are 4 possible thread states defined in kern/include/thread.h, by the threadstate_t enumeration. These are:
+- S_RUN: The thread is currenting executing
+- S_READY: The thread is ready to be executed
+- S_SLEEP: The thread is currently suspended in a wait channel until something wakes it up.
+- S_ZOMBIE: The thread has been exited and is pending to be destroyed.
+
+4. Turning interrupts off means that the CPU will not respond to interrupts until it is turned on again. We can turn off interrupts using the machine-independent splhigh() function defined in kern/include/spl.h. The actual function that turns off the interrupt is the cpu_irqoff() function in arch/mips/thread/cpu.c. It is important to turn off interrupts during these processes because we do not want such thread context switching operations to be interrupted before completion, as doing so may lead to many synchronization problems that may arise from an unfinished context switch. 
+
+5. When a thread wakes up do stuff
+
+6. The following functions can affect the determination of the next thread to run: 
+
+7. 
+
+8. The hardware timer is periodically called to schedule the threads and do thread_yield() to run the next thread. The hardware timer is called at a specified frequency. The function called upon timer interrupt is hardclock() in kern/thread/clock.c on line 93.
+
+9. wchan_sleep() can be used to help implement semaphore P() function, how its does is upon calling a hypothetical P(), the P() function will allow the thread to executed if the semaphore counter is greater than 0. If the semaphore counter is 0, then the P() function will do wchan_sleep(). Wchan_wakeone() can be used to implement semaphore V() function, as we will need to call this function in our semaphore V() whenever count is greater than 0 so that we wait up threads put to sleep by the P() function.  
+
+10. In the wait channel functions, they all take in a spinlock as an argument - this spinlock will lock the wait channel queue and release it when it either fails to be added to the queue or is successfully added to the queue. That way another thread cannot access the queue with the intent of waking up a thread without the operation being completed, avoiding the race condition of sleeping/waking threads.
