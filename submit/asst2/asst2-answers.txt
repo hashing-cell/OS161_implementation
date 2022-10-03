@@ -12,11 +12,19 @@
 
 4. Turning interrupts off means that the CPU will not respond to interrupts until it is turned on again. We can turn off interrupts using the machine-independent splhigh() function defined in kern/include/spl.h. The actual function that turns off the interrupt is the cpu_irqoff() function in arch/mips/thread/cpu.c. It is important to turn off interrupts during these processes because we do not want such thread context switching operations to be interrupted before completion, as doing so may lead to many synchronization problems that may arise from an unfinished context switch. 
 
-5. When a thread wakes up do stuff
+5. A sleeping thread gets woken up and made runnable by calling the thread_make_runnable() in kern/thread/thread.c in the other thread, which adds the thread to the thread runqueue through the use of threadlist_addtail(). When a thread is placed in the runqueue it is no longer sleeping as it is ready to be run by the thread scheduler.
+
 
 6. The following functions can affect the determination of the next thread to run: 
+- schedule() in line 820 in kern/thread/thread.c, provided that schedule() is implemented (currently it is not).
+- The use of the following functions declared in kern/include/threadlist.h:
+    - void threadlist_addhead();
+    - void threadlist_addtail();
+    - struct thread *threadlist_remhead();
+    - struct thread *threadlist_remtail();
+    
+7. Thread_yield() is the function that actually stops the current thread and executes the next thread. It calls thread_switch with the S_READY enum as a parameter. Thread_switch picks the next thread to be executed from whatever is in the head position of the runqueue of threads. As mentioned in the previous, either one of the following functions: schedule(), threadlist_addhead(), threadlist_addtail(), threadlist_remhead(), and threadlist_remtail() can modify the runqueue of threads
 
-7. 
 
 8. The hardware timer is periodically called to schedule the threads and do thread_yield() to run the next thread. The hardware timer is called at a specified frequency. The function called upon timer interrupt is hardclock() in kern/thread/clock.c on line 93.
 
