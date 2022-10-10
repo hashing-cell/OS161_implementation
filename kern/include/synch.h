@@ -44,10 +44,10 @@
  * internally.
  */
 struct semaphore {
-        char *sem_name;
+	char *sem_name;
 	struct wchan *sem_wchan;
 	struct spinlock sem_lock;
-        volatile unsigned sem_count;
+	volatile unsigned sem_count;
 };
 
 struct semaphore *sem_create(const char *name, unsigned initial_count);
@@ -73,10 +73,10 @@ void V(struct semaphore *);
  * (should be) made internally.
  */
 struct lock {
-        char *lk_name;
+    char *lk_name;
 	struct wchan *lock_wchan;
 	struct spinlock lock_spinlock;
-        volatile struct thread *lock_holder;
+    volatile struct thread *lock_holder;
 };
 
 struct lock *lock_create(const char *name);
@@ -113,7 +113,7 @@ bool lock_do_i_hold(struct lock *);
  */
 
 struct cv {
-        char *cv_name;
+    char *cv_name;
 	struct wchan *cv_wchan;
 	struct spinlock cv_spinlock;
 };
