@@ -10,17 +10,21 @@
 #define N_LORD_FLOWERKILLER 8
 #define NROPES 16
 static int ropes_left = NROPES;
-static struct lock *ropes_left_lock;
+/* Lock protecting the above variable*/
+static struct lock *ropes_left_lock; 
 
+/* Hook data structure */
 struct hook {
-	int rope_index;
+	volatile int rope_index;
 };
 
+/* Stake data structure */
 struct stake {
-	int rope_index;
+	volatile int rope_index;
 	struct lock *stake_lock;
 }; 
 
+/* Rope data structure */
 struct rope {
 	volatile bool severed;
 	struct lock *rope_lock; 
@@ -38,21 +42,42 @@ enum sever_location_type {
 	STAKE
 };
 
-/* Semaphores for ensuring that the balloon and main thread run after the escape */
+/* Semaphore for ensuring that the balloon thread runs after all ropes have been severed */
 struct semaphore *balloon_sema;
+/* Semaphore for ensuring that the main thread runs after all other threads have exited */
 struct semaphore *main_sema;
-
-
-/* Synchronization primitives */
-
-/* Implement this! */
 
 /*
  * Describe your design and any invariants or locking protocols
  * that must be maintained. Explain the exit conditions. How
  * do all threads know when they are done?
+ * 
+ * Only Dandelion accesses the hooks so no need to lock that
+ * Marigold and Lord Flowerkiller both access stakes so a lock is needed so only one can modify a given item
+ * in the stakelist at a time
+ * 
+ * ropelist is accessed indirectly via the "ropeindex" of the hook or stake. Only one thread may operate a given item 
+ * in the ropelist at a time. 
+ * 
+ * Exit condition of Dandelion and Marigold is when all ropes are severed, which is when ropes_left = 0
+ * 
+ * Exit condition of Lord Flowerkiller is when ropes_left = 1. This is because when there is only 1 rope left there is nothing to switch
+ * 
+ * Whenever a rope is cut, the semaphore that the balloon thread uses is decrement. The balloon thread wakes up when the balloon_sema is decremented
+ * 16 times, which is equal to the number of ropes
+ * 
+ * Every thread above that is not the main thread itself will decrement the main_sema. When all other threads are done then the main thread will reawaken
+ * to do cleanup
+ * 
  */
 
+/* 
+	Generic function for cutting the rope safely. We pass the parameters "sever_method" and "location_index"
+	to ensure that the correct prints are done as per the requirements, 
+	otherwise the function for cutting the rope works the same for both Dandelion and Marigold.
+
+	Return true if the rope was severed, otherwise false.
+*/
 static
 bool
 sever_rope_attempt(int rope_index, enum sever_location_type sever_method, int location_index) {
@@ -87,18 +112,18 @@ dandelion(void *p, unsigned long arg)
 
 	kprintf("Dandelion thread starting\n");
 
-	/* Implement this function */
 	while (true) {
-		lock_acquire(ropes_left_lock);
+		//Check if there are any ropes left, if all ropes are severed there is nothing to do
 		if (ropes_left <= 0){
-			lock_release(ropes_left_lock);
 			break;
 		}
-		lock_release(ropes_left_lock);
 
 
 		int hook_index = random() % NROPES;
+		//we try to sever the rope, if it exists
 		bool successful_sever = sever_rope_attempt(hooklist[hook_index].rope_index, HOOK, hook_index);
+
+		//if the rope was successfully severed, decrement the balloon semaphore and yield the thread
 		if (successful_sever) {
 			V(balloon_sema);
 			thread_yield();
@@ -119,25 +144,27 @@ marigold(void *p, unsigned long arg)
 
 	kprintf("Marigold thread starting\n");
 
-	/* Implement this function */
 	while (true) {
-		lock_acquire(ropes_left_lock);
+		//Check if there are any ropes left, if all ropes are severed there is nothing to do
 		if (ropes_left <= 0){
-			lock_release(ropes_left_lock);
 			break;
 		}
-		lock_release(ropes_left_lock);
 
 
 		int stake_index = random() % NROPES;
 
+		//Since both marigold and lord flowerkiller both access the stakelist, we need to lock it unlike Dandelion who has the hooks to himself
 		lock_acquire(stakelist[stake_index].stake_lock);
+		//we try to sever the rope, if it exists
 		bool successful_sever = sever_rope_attempt(stakelist[stake_index].rope_index, STAKE, stake_index);
+
+		//if the rope was successfully severed, decrement the balloon semaphore and yield the thread
 		if (successful_sever) {
 			V(balloon_sema);
 			lock_release(stakelist[stake_index].stake_lock);
 			thread_yield();
 		}
+		//Release the statelist
 		lock_release(stakelist[stake_index].stake_lock);
 	}
 	
@@ -147,26 +174,78 @@ marigold(void *p, unsigned long arg)
 	thread_exit();
 }
 
-// static
-// void
-// flowerkiller(void *p, unsigned long arg)
-// {
-// 	(void)p;
-// 	(void)arg;
+static
+void
+flowerkiller(void *p, unsigned long arg)
+{
+	(void)p;
+	(void)arg;
 
-// 	kprintf("Lord FlowerKiller thread starting\n");
+	kprintf("Lord FlowerKiller thread starting\n");
 
-// 	/* Implement this function */
-// 	while (true) {
-// 		lock_acquire(ropes_left_lock);
-// 		if (ropes_left <= 1){
-// 			lock_release(ropes_left_lock);
-// 			break;
-// 		}
-// 		lock_release(ropes_left_lock);
+	/* Implement this function */
+	while (true) {
+		//Check if there are enough ropes left to switch.
+		if (ropes_left <= 1){
+			break;
+		}
+		
+		int stake1;
+		int stake2;
 
-// 	}
-// }
+		int stake_index1;
+		int stake_index2;
+		stake1 = random() % NROPES;
+		stake2 = random() % NROPES;
+		
+		// Apparently sometimes, 2 flowerkiller may grab the "inverse" of another flowerkiller's rope leading to a deadlock. 
+		// The solution to this is to ensure that one stake index grabbed is consistently lower or higher than the 
+		// other stake grabbed
+		stake_index1 = stake1 < stake2 ? stake1 : stake2;
+		stake_index2 = stake1 < stake2 ? stake2 : stake1;
+
+		if (stake_index1 == stake_index2) {
+			continue;
+		}
+		
+		lock_acquire(stakelist[stake_index1].stake_lock);
+		lock_acquire(ropelist[stakelist[stake_index1].rope_index].rope_lock);
+		//If the first stake's rope is severed we release the locks and try again
+		if (ropelist[stakelist[stake_index1].rope_index].severed) {
+			lock_release(ropelist[stakelist[stake_index1].rope_index].rope_lock);
+			lock_release(stakelist[stake_index1].stake_lock);
+			continue;
+		}
+
+		lock_acquire(stakelist[stake_index2].stake_lock);
+		lock_acquire(ropelist[stakelist[stake_index2].rope_index].rope_lock);
+
+		//If the second stake's rope is severed we release the lock and try again
+		if (ropelist[stakelist[stake_index2].rope_index].severed) {
+			lock_release(ropelist[stakelist[stake_index2].rope_index].rope_lock);
+			lock_release(stakelist[stake_index2].stake_lock);
+			lock_release(ropelist[stakelist[stake_index1].rope_index].rope_lock);
+			lock_release(stakelist[stake_index1].stake_lock);
+			continue;
+		} else {
+			//If we get here it means that the conditions are set for this Flowerkiller thread to switch ropes and then yield
+			int temp = stakelist[stake_index1].rope_index;
+			stakelist[stake_index1].rope_index = stakelist[stake_index2].rope_index;
+			stakelist[stake_index2].rope_index = temp;
+			kprintf("Lord FlowerKiller switched rope %d from stake %d to stake %d\n",stakelist[stake_index1].rope_index,stake_index2,stake_index1);
+			kprintf("Lord FlowerKiller switched rope %d from stake %d to stake %d\n",stakelist[stake_index2].rope_index,stake_index1,stake_index2);
+			lock_release(ropelist[stakelist[stake_index2].rope_index].rope_lock);
+			lock_release(stakelist[stake_index2].stake_lock);
+			lock_release(ropelist[stakelist[stake_index1].rope_index].rope_lock);
+			lock_release(stakelist[stake_index1].stake_lock);
+			thread_yield();
+		}
+	}
+
+	kprintf("Lord FlowerKiller thread done\n");
+	V(main_sema);
+	thread_exit();
+}
 
 static
 void
@@ -195,7 +274,6 @@ airballoon(int nargs, char **args)
 {
 
 	int err = 0, i;
-	(void)i;
 
 	(void)nargs;
 	(void)args;
@@ -227,20 +305,21 @@ airballoon(int nargs, char **args)
 			  NULL, dandelion, NULL, 0);
 	if(err)
 		goto panic;
-/*
+
 	for (i = 0; i < N_LORD_FLOWERKILLER; i++) {
 		err = thread_fork("Lord FlowerKiller Thread",
 				  NULL, flowerkiller, NULL, 0);
 		if(err)
 			goto panic;
 	}
-*/
+
 	err = thread_fork("Air Balloon",
 			  NULL, balloon, NULL, 0);
 	if(err)
 		goto panic;
 
-	for (int j = 0; j < 3; j++){
+	// Put Main thread to sleep while all the others threads are doing their business
+	for (int j = 0; j < N_LORD_FLOWERKILLER + 3; j++){
 		P(main_sema);
 	}
 	goto done;
@@ -249,7 +328,6 @@ panic:
 	      strerror(err));
 
 done:
-	kprintf("Main thread done\n");
 	//Cleanup all dynamically allocated memory
 	for (int j = 0; j < NROPES; j++) {
 		lock_destroy(stakelist[j].stake_lock);
@@ -258,6 +336,8 @@ done:
 	lock_destroy(ropes_left_lock);
 	sem_destroy(balloon_sema);
 	sem_destroy(main_sema);
+
+	kprintf("Main thread done\n");
 
 	return 0;
 }
