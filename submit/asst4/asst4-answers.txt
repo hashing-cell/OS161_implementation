@@ -2,7 +2,7 @@
 
 2. These flags are defined by an enumeration in "src/kern/include/uio.h". UIO_USERISPACE refers to user process code, and UIO_USERSPACE refers to user process data. It is important to distinguish userspace data from kernel data (marked as UIO_SYSSPACE), since userspace code and data should not be trusted. Specifically, these flags are primarily used in uio.c, where data marked by UIO_SYSSPACE is data only transferred within the kernel and is manipulated using memmove(), while data marked by UIO_USERSPACE/UIO_USERISPACE is manipulated using copyin/copyout.
 
-3. Dunno
+3. //write stuff
 
 4. We need to call vfs_close() because we also call vfs_open() at the beginning the function. vfs_open() allocates memory and increases the file reference counter. Since runprogram() does not return but just goes into userspace, we must free the resources used by doing vfs_open() by doing vfs_close(), to prevent memory leaks and to ensure that the file reference counter is in sync. We don't need the file open anyways, since the new userspace process created by runprogram() will execute the file from the pointer "entrypoint" passed to "enter_new_process()" since the contents of the file have already been loaded into a new address space by the loadelf() function. 
 
@@ -18,7 +18,19 @@
 
 10. The current implementation of kill_curthread() is to create a kernel panic, which is not the correct thing to do to handle bad or misbehaved user programs. Part of the reason why the kernel exists is to make sure badly behaved user programs don't bring down the entire system along with other processes unrelated to the poorly behaving user program. The current implementation of kill_curthread() also doesn't actually kill the badly-behaving user program in question, which is what we would otherwise expect kill_curthread() to do.
 
-11. 
+11. If our system call need more than 4 arguments, in addition to reading registers a0-a3, we would then fetch the remaining arguments from the user stack. Specifically, the remaining arguments would be located at addresses starting at sp+16. Since they are in userspace we would need to use copyin() to get the remaining arguments. 
+
+12. The SYSCALL macro, defined in "src/userland/lib/libc/arch/mips/syscalls-mips.S", loads the syscall number into the v0 register which is defined by the macro concatentation "SYS_##sym", and then jumps to the shared system-call code that does the actual system call. For example, if you wanted to do the system call "SYS_reboot" defined in "src/kern/include/kern/syscall.h", then when you use the SYSCALL macro you would pass the argument like "SYSCALL(reboot, 119). The "reboot" argument gets concatenated which forms the "SYS_reboot" define in place of "SYS_##sym", and the define of SYS_reboot is 119, which will then be the number that is placed in the v0 register.
+
+13. The MIPS instruction to trigger a system call is literally "syscall", according to the code in "src/userland/lib/libc/arch/mips/syscalls-mips.S" on line 84.
+
+14. The 32-bit file handle (arg0) will be found in register a0 (tf->tf_a0). Register a1 (tf->tf_a1) will be left blank since a 64-bit argument must be "aligned". The 64-bit offset (arg1) will be found in both register a2 and a3 (tf->tf_a2 and tf->tf_a3), as a 64-bit argument takes up the space of 2 registers, since registers in MIPS are 32-bits. Finally the 32-bit whence (arg2) will be found on the stack at memory address ((tf->tf_sp)+16). To retrieve this argument we will need a copyin with the user pointer argument set to ((tf->tf_sp)+16). We will write the return value into registers v0 and v1 (tf->tf_v0 and tf->tf_v1) as the return value is 64-bits in size.
+
+15. vfs_open() in "src/kern/vfs/vfspath.c" is the function used to open a file by the kernel. VOP_READ() in "src/kern/include/vnode.h" is the macro used to read an open file. VOP_WRITE() in "src/kern/include/vnode.h" is the macro used to write to an open file. "struct vnode" defined in "src/kern/include/vnode.h" is the data structure that represents an open file by the kernel.
+
+16. VOP_INCREF and VOP_DECREF are macros that call function which increment or decrement the reference count of a vnode usage (specifically the "vn_refcount" field in the "struct vnode" datatype. vn_refcount keeps track the number of references to the vnode. When the reference count of a vnode is 0 when running VOP_DECREF, then VOP_DECREF automatically cleans it up. 
+
+
 
 
 
