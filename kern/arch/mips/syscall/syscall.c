@@ -35,6 +35,7 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
+#include <copyinout.h>
 
 
 /*
@@ -80,6 +81,7 @@ syscall(struct trapframe *tf)
 {
 	int callno;
 	int32_t retval;
+	int64_t retval64;
 	int err;
 
 	KASSERT(curthread != NULL);
@@ -98,8 +100,11 @@ syscall(struct trapframe *tf)
 	 */
 
 	retval = 0;
+	retval64 = 0;
 
 	switch (callno) {
+		int whence;
+
 	    case SYS_reboot:
 		err = sys_reboot(tf->tf_a0);
 		break;
@@ -112,35 +117,36 @@ syscall(struct trapframe *tf)
 	    /* Add stuff here */
 
 	    case SYS_open:
-		//stuff
+		err = sys_open((userptr_t)tf->tf_a0, tf->tf_a1, &retval);
 		break;
 
 	    case SYS_read:
-		//stuff
+		err = sys_read(tf->tf_a0, (userptr_t)tf->tf_a1, tf->tf_a2, &retval);
 		break;
 
 	    case SYS_write:
-		//stuff
+		err = sys_write(tf->tf_a0, (userptr_t)tf->tf_a1, tf->tf_a2, &retval);
 		break;
 
 	    case SYS_lseek:
-		//stuff
+		copyin((userptr_t)((tf->tf_sp) + 16), &whence, sizeof(int));
+		err = sys_lseek(tf->tf_a0, (((off_t)tf->tf_a2 << 32) | tf->tf_a3), whence, &retval64);
 		break;
 
 	    case SYS_close:
-		//stuff
+		err = sys_close(tf->tf_a0, &retval);
 		break;
 
 	    case SYS_dup2:
-		//stuff
+		err = sys_dup2(tf->tf_a0, tf->tf_a1, &retval);
 		break;
 
 	    case SYS_chdir:
-		//stuff
+		err = sys_chdir((userptr_t)tf->tf_a0, &retval);
 		break;
 
 	    case SYS___getcwd:
-		//stuff
+		err = sys___getcwd((userptr_t)tf->tf_a0, tf->tf_a1, &retval);
 		break;
 
 	    default:
@@ -162,6 +168,11 @@ syscall(struct trapframe *tf)
 	else {
 		/* Success. */
 		tf->tf_v0 = retval;
+
+		if (retval64) {
+			tf->tf_v0 = retval64 & 0xFFFFFFFF00000000;
+			tf->tf_v1 = retval64 & (uint64_t) 0x00000000FFFFFFFF << 32;
+		}
 		tf->tf_a3 = 0;      /* signal no error */
 	}
 

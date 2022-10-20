@@ -64,14 +64,14 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 /*
  * File handling system call declarations
  */
-int sys_open(const char *filename, int flags);
-ssize_t sys_read(int fd, void *buf, size_t buflen);
-ssize_t sys_write(int fd, const void *buf, size_t nbytes);
-off_t sys_lseek(int fd, off_t pos, int whence);
-int sys_close(int fd);
-int sys_dup2(int oldfd, int newfd);
-int sys_chdir(const char *pathname);
-int sys___getcwd(char *buf, size_t buflen);
+int sys_open(const userptr_t filename, int flags, int *retval);
+int sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval);
+int sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval);
+int sys_lseek(int fd, off_t pos, int whence, off_t *retval);
+int sys_close(int fd, int *retval);
+int sys_dup2(int oldfd, int newfd, int *retval);
+int sys_chdir(const userptr_t pathname, int *retval);
+int sys___getcwd(userptr_t buf, size_t buflen, int *retval);
 
 
 #endif /* _SYSCALL_H_ */
