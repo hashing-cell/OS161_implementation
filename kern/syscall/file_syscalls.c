@@ -3,6 +3,10 @@
 */
 #include <syscall.h>
 #include <types.h>
+#include <kern/errno.h>
+#include <vfs.h>
+#include <vnode.h>
+#include <lib.h>
 
 /*
  * open() system call implementation
@@ -10,7 +14,29 @@
 int
 sys_open(const userptr_t filename, int flags, int *retval) 
 {
-    (void) filename; (void) flags; (void) retval;
+    //(void) filename; (void) flags; (void) retval;
+    struct vnode *opened_file;
+    size_t *ret_got;
+    char* file_dest  = kmalloc(sizeof(filename));
+
+    if(!copyinstr(filename, file_dest, sizeof(filename), ret_got)) {
+        //error for invalid copyin
+        kfree(file_dest);
+        //set errno?
+        return -1;
+    }
+    
+    if(!vfs_open(filename, flags, NULL, &opened_file)) {
+        kfree(file_dest);
+        //set errno?
+        return -1;
+    }
+
+    //if successful, add to filetable
+    //create_ft_file(...)
+    //add_file_entry(...)
+
+
     return 0;    
 }
 
