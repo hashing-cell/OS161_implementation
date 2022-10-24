@@ -1,3 +1,6 @@
+#ifndef _FILETABLE_H_
+#define _FILETABLE_H_
+
 #include <types.h>
 #include <vnode.h>
 #include <limits.h>
@@ -25,3 +28,4 @@ int destroy_filetable(void);
 int add_file_entry(struct filetable*, struct ft_file*);  //decide how to add files to ft, add to end or fill in holes first?
 void init_std(struct filetable*);
 
+#endif

@@ -10,9 +10,10 @@
 #include <current.h>
 #include <proc.h>
 #include <copyinout.h>
-#include <copyinout.h>
 #include <limits.h>
 #include <uio.h>
+#include <filetable.h>
+#include <synch.h>
 
 /*
  * open() system call implementation
@@ -78,7 +79,63 @@ sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval)
 int
 sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
 {
-    (void) fd; (void) buf; (void) nbytes; (void) retval;
+    struct iovec iov;
+    struct uio ku;
+    char *k_buf;
+
+    if (fd < 0 || fd >= OPEN_MAX) {
+        *retval = -1;
+        return EBADF;
+    }
+
+    // Check whether file entry exists
+    lock_acquire(curproc->p_ft->lk_ft);
+    if(curproc->p_ft->file_entries[fd] == NULL) {
+        lock_release(curproc->p_ft->lk_ft);
+        *retval = -1;
+        return EBADF;
+    }
+    lock_release(curproc->p_ft->lk_ft);
+
+    // Copyin data from userspace to a buffer
+    k_buf = kmalloc(nbytes);
+    if (!k_buf) {
+        *retval = -1;
+        return ENOMEM;
+    }
+    if (copyin(buf, k_buf, nbytes)) {
+        kfree(k_buf);
+        *retval = -1;
+        return EFAULT;
+    }
+
+    // Check if file is opened for writing
+    lock_acquire(curproc->p_ft->file_entries[fd]->lk_file);
+    if ((curproc->p_ft->file_entries[fd]->flags & O_WRONLY) != O_WRONLY) {
+        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+        kfree(k_buf);
+        *retval = -1;
+        return EBADF;
+    }
+
+    // Create uio block and write to vnode
+    uio_kinit(&iov, &ku, k_buf, nbytes, curproc->p_ft->file_entries[fd]->offset, UIO_WRITE);
+    
+    int result = VOP_WRITE(curproc->p_ft->file_entries[fd]->vn, &ku);
+    if (result) {
+        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+        kfree(k_buf);
+        *retval = -1;
+        return result;
+    }
+
+    size_t nbytes_written = nbytes - ku.uio_resid;
+    curproc->p_ft->file_entries[fd]->offset += nbytes_written;
+
+    lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+    kfree(k_buf);
+    *retval = nbytes_written;
+    
     return 0;
 }
 
@@ -121,7 +178,7 @@ sys_chdir(const userptr_t pathname, int *retval)
     char path_str[PATH_MAX];
     size_t path_str_size = 0;
     
-    if (!copyinstr(pathname, path_str, PATH_MAX, &path_str_size)) {
+    if (copyinstr(pathname, path_str, PATH_MAX, &path_str_size)) {
         *retval = -1;
         return EFAULT;
     }
@@ -154,7 +211,7 @@ sys___getcwd(userptr_t buf, size_t buflen, int *retval)
     }
 
     size_t path_str_size = 0;
-    if (!copyoutstr(k_buf, buf, buflen, &path_str_size)) {
+    if (copyoutstr(k_buf, buf, buflen, &path_str_size)) {
         *retval = -1;
         return EFAULT;
     }
