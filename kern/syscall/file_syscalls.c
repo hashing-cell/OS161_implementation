@@ -83,7 +83,73 @@ sys_open(const char *filename, int flags, int *retval)
 int
 sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval)
 {
-    (void) fd; (void) buf; (void) buflen; (void) retval;
+    struct iovec iov;
+    struct uio ku;
+    char *k_buf;
+
+    if (buf == NULL) {
+        *retval = -1;
+        return EFAULT;
+    }
+
+    // Check if fd is a valid one
+    if (fd < 0 || fd >= OPEN_MAX) {
+        *retval = -1;
+        return EBADF;
+    }
+
+    // Check whether file entry exists
+    lock_acquire(curproc->p_ft->lk_ft);
+    if(curproc->p_ft->file_entries[fd] == NULL) {
+        lock_release(curproc->p_ft->lk_ft);
+        *retval = -1;
+        return EBADF;
+    }
+    lock_release(curproc->p_ft->lk_ft);
+
+    // Check if file is opened for reading
+    lock_acquire(curproc->p_ft->file_entries[fd]->lk_file);
+    if ((curproc->p_ft->file_entries[fd]->flags & O_RDONLY) != O_RDONLY) {
+        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+        kfree(k_buf);
+        *retval = -1;
+        return EBADF;
+    }
+
+    // Allocate memory and create uio block and read from vnode associated with file
+    k_buf = kmalloc(buflen);
+    if (!k_buf) {
+        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+        *retval = -1;
+        return ENOMEM;
+    }
+    uio_kinit(&iov, &ku, k_buf, buflen, curproc->p_ft->file_entries[fd]->offset, UIO_READ);
+    
+    // Do the actual vnode read
+    int result = VOP_READ(curproc->p_ft->file_entries[fd]->vn, &ku);
+    if (result) {
+        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+        kfree(k_buf);
+        *retval = -1;
+        return result;
+    }
+
+    // Check how much bytes have been actually written, and advance seek position
+    size_t nbytes_read = buflen - ku.uio_resid;
+    curproc->p_ft->file_entries[fd]->offset += nbytes_read;
+
+    // Copyout to user provided buffer
+    if (copyout(k_buf, buf, nbytes_read)) {
+        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+        kfree(k_buf);
+        *retval = -1;
+        return EFAULT;
+    }
+
+    lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+    kfree(k_buf);
+    *retval = nbytes_read;
+
     return 0;
 }
 
@@ -97,6 +163,12 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
     struct uio ku;
     char *k_buf;
 
+    if (buf == NULL) {
+        *retval = -1;
+        return EFAULT;
+    }
+
+    // Check if fd is a valid one
     if (fd < 0 || fd >= OPEN_MAX) {
         *retval = -1;
         return EBADF;
@@ -143,6 +215,7 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
         return result;
     }
 
+    // Check how much bytes have been actually written, and advance seek position
     size_t nbytes_written = nbytes - ku.uio_resid;
     curproc->p_ft->file_entries[fd]->offset += nbytes_written;
 
