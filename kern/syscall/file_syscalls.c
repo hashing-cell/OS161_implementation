@@ -21,11 +21,11 @@
 int
 sys_open(const char *filename, int flags, int *retval) 
 {
-    //(void) filename; (void) flags; (void) retval;
     *retval = -1;
     struct vnode *opened_file;
     size_t ret_got = 0;
     size_t path_len;
+    int fid;
 
     if(filename == NULL) {
         return EFAULT;
@@ -45,7 +45,7 @@ sys_open(const char *filename, int flags, int *retval)
         //error for invalid copyin
         kfree(file_dest);
         //set errno?
-        return -1;
+        return err;
     }
     
     err = vfs_open(file_dest, flags, 0664, &opened_file);
@@ -54,13 +54,23 @@ sys_open(const char *filename, int flags, int *retval)
         //error for invalid copyin
         kfree(file_dest);
         //set errno?
-        return -1;
+        return err;
     }
     //if successful, add to filetable
     struct ft_file* f;
     f = ft_file_create(opened_file, flags);
-    add_ft_file(curproc->p_ft, f);
-    *retval = 0;
+    if(f == NULL) {
+        kfree(file_dest);
+        return ENOMEM;
+    }
+
+    err = add_ft_file(curproc->p_ft, f, &fid);
+    if(err) {  //checking for EMFILE err
+        kfree(file_dest);
+        kfree(f);
+        return err;  
+    }
+    *retval = fid;
     
     kfree(file_dest);
     return 0;    
@@ -159,7 +169,31 @@ sys_lseek(int fd, off_t pos, int whence, off_t *retval)
 int
 sys_close(int fd, int *retval)
 {
-    (void) fd; (void) retval;
+    *retval = -1;
+
+    if(fd < 0 || fd >= OPEN_MAX) {
+        return EBADF;
+    }
+
+    struct filetable *ft = curproc->p_ft;
+    lock_acquire(ft->lk_ft);
+    struct ft_file *f = ft->file_entries[fd];
+
+    //return err if 0 < fd <= OPEN_MAX or there is no open file with file desc fd
+    if(f == NULL) {
+        lock_release(ft->lk_ft);
+        return EBADF;
+    }
+    lock_acquire(f->lk_file);
+    vfs_close(f->vn);
+    lock_release(f->lk_file);
+
+    ft_file_destroy(f);
+    ft->file_entries[fd] = NULL;
+    ft->num_opened--;
+    lock_release(ft->lk_ft);
+
+    *retval = 0;
     return 0;
 }
 

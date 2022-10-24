@@ -27,7 +27,7 @@ void filetable_destroy(struct filetable*);
 struct ft_file* ft_file_create(struct vnode*, int);
 void ft_file_destroy(struct ft_file*);
 void filetable_destroy(struct filetable* ft);
-int add_ft_file(struct filetable*, struct ft_file*);  //decide how to add files to ft, add to end or fill in holes first?
+int add_ft_file(struct filetable*, struct ft_file*, int*);  //decide how to add files to ft, add to end or fill in holes first?
 void init_stdio(struct filetable*);
 
 #endif

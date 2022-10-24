@@ -48,8 +48,6 @@ struct ft_file* ft_file_create(struct vnode* v, int in_flags) {
     f->offset = 0;
     f->flags = in_flags;
     f->lk_file = lock_create("ft_file lock");
-
-    VOP_INCREF(f->vn);
     
     return f;
 }
@@ -61,8 +59,9 @@ void ft_file_destroy(struct ft_file* f) {
     kfree(f);
 }
 
-int add_ft_file(struct filetable *ft, struct ft_file *f) {
-    int fid;
+//return error code or 0 if succeeded
+//return file desc in fid param
+int add_ft_file(struct filetable *ft, struct ft_file *f, int *fid) {
     if(ft->num_opened >= OPEN_MAX) {
         return EMFILE;
     }
@@ -70,7 +69,7 @@ int add_ft_file(struct filetable *ft, struct ft_file *f) {
     lock_acquire(ft->lk_ft);
 
     ft->file_entries[ft->next_fid] = f;
-    fid = ft->next_fid;
+    *fid = ft->next_fid;
     ft->num_opened++;
 
     for(int i = 0; i < OPEN_MAX-3; i++) {
@@ -85,7 +84,7 @@ int add_ft_file(struct filetable *ft, struct ft_file *f) {
 
     lock_release(ft->lk_ft);
 
-    return fid;
+    return 0;
 }
 
 void filetable_destroy(struct filetable* ft) {
