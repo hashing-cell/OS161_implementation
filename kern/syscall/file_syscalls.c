@@ -109,9 +109,9 @@ sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval)
 
     // Check if file is opened for reading
     lock_acquire(curproc->p_ft->file_entries[fd]->lk_file);
-    if ((curproc->p_ft->file_entries[fd]->flags & O_RDONLY) != O_RDONLY) {
+    int flags_masked = curproc->p_ft->file_entries[fd]->flags & 0x03; //bitmask for the last 2 bits
+    if (flags_masked == O_WRONLY) {
         lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-        kfree(k_buf);
         *retval = -1;
         return EBADF;
     }
@@ -197,7 +197,8 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
 
     // Check if file is opened for writing
     lock_acquire(curproc->p_ft->file_entries[fd]->lk_file);
-    if ((curproc->p_ft->file_entries[fd]->flags & O_WRONLY) != O_WRONLY) {
+    int flags_masked = curproc->p_ft->file_entries[fd]->flags & 0x03; //bitmask for the last 2 bits
+    if (flags_masked == O_RDONLY) {
         lock_release(curproc->p_ft->file_entries[fd]->lk_file);
         kfree(k_buf);
         *retval = -1;
