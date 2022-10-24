@@ -15,7 +15,7 @@ struct filetable* create_filetable(void) {
     ft->lk_ft = lock_create("filetable lock");
     ft->num_opened = 3;  //stdio & stderr opened
     ft->next_fid = 3;    //1st 3 file desc to be used for stdio & stderr, start at idx 3
-    //init_std(ft);
+    init_std(ft);
     for(int i = 3; i < OPEN_MAX; i++) {  //setup 1st 3 file desc to be used for stdio & stderr      
         ft->file_entries[i] = NULL;
     } 
@@ -47,28 +47,31 @@ struct ft_file* create_ft_file(struct vnode* v, mode_t in_flags) {
 }
 
 int add_file_entry(struct filetable *ft, struct ft_file *f) {
-    if(ft->num_opened < OPEN_MAX) {
-        lock_acquire(ft->lk_ft);
-
-        ft->file_entries[ft->next_fid] = f;
-        ft->num_opened++;
-
-        if(ft->num_opened < OPEN_MAX) {  //if ft still not full yet, set next_fid
-            ft->next_fid++;
-            if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound
-                ft->next_fid = 0;
-
-                while(ft->file_entries[ft->next_fid] != NULL) {  //find next free slot
-                    ft->next_fid++;
-                }
-            }
-        }
-
-        lock_release(ft->lk_ft);
-
-        return 1;
+    int fid;
+    if(ft->num_opened >= OPEN_MAX) {
+        return EMFILE;
     }
-    return EMFILE;
+
+    lock_acquire(ft->lk_ft);
+
+    ft->file_entries[ft->next_fid] = f;
+    fid = ft->next_fid;
+    ft->num_opened++;
+
+    for(int i = 0; i < OPEN_MAX-3; i++) {
+        ft->next_fid++;
+        if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound
+            ft->next_fid = 3;
+        }
+        if(ft->file_entries[ft->next_fid] == NULL) {
+            break;
+        }
+    }
+
+    lock_release(ft->lk_ft);
+
+    return fid;
+    
 }
 
 

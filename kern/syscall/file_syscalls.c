@@ -10,37 +10,54 @@
 #include <current.h>
 #include <proc.h>
 #include <copyinout.h>
+#include <copyinout.h>
+#include <limits.h>
+#include <uio.h>
 
 /*
  * open() system call implementation
  */
 int
-sys_open(const userptr_t filename, int flags, int *retval) 
+sys_open(const char *filename, int flags, int *retval) 
 {
-    (void) retval;
     //(void) filename; (void) flags; (void) retval;
+    *retval = -1;
     struct vnode *opened_file;
-    size_t *ret_got = kmalloc(sizeof(PATH_MAX));
-    char* file_dest  = kmalloc(sizeof(filename));
+    size_t ret_got = 0;
 
-    if(!copyinstr(filename, file_dest, sizeof(filename), ret_got)) {
+    if(filename == NULL) {
+        return EFAULT;
+    }
+
+    char* file_dest  = kmalloc(sizeof(filename)+1);
+
+    if(file_dest == NULL) {
+        return ENOMEM;
+    }
+
+    int err = copyinstr((const_userptr_t)filename, file_dest, sizeof(filename), &ret_got);
+    
+    if(err)
+    {
         //error for invalid copyin
         kfree(file_dest);
         //set errno?
         return -1;
     }
     
-    if(!vfs_open(file_dest, flags, 0664, &opened_file)) {
+    err = vfs_open(file_dest, flags, 0664, &opened_file);
+    if(err)
+    {
+        //error for invalid copyin
         kfree(file_dest);
         //set errno?
         return -1;
     }
-
     //if successful, add to filetable
     struct ft_file* f;
     f = create_ft_file(opened_file, flags);
     add_file_entry(curproc->p_ft, f);
-
+    *retval = 0;
     return 0;    
 }
 
@@ -101,7 +118,21 @@ sys_dup2(int oldfd, int newfd, int *retval)
 int
 sys_chdir(const userptr_t pathname, int *retval)
 {
-    (void) pathname; (void) retval;
+    char path_str[PATH_MAX];
+    size_t path_str_size = 0;
+    
+    if (!copyinstr(pathname, path_str, PATH_MAX, &path_str_size)) {
+        *retval = -1;
+        return EFAULT;
+    }
+    
+    int result = vfs_chdir(path_str);
+    if (result) {
+        *retval = -1;
+        return result;
+    }
+        
+    *retval = 0;
     return 0;
 }
 
@@ -111,6 +142,24 @@ sys_chdir(const userptr_t pathname, int *retval)
 int
 sys___getcwd(userptr_t buf, size_t buflen, int *retval)
 {
-    (void) buf; (void) buflen; (void) retval;
+    struct iovec iov;
+    struct uio ku;
+    char k_buf[PATH_MAX] = {0};
+
+    uio_kinit(&iov, &ku, k_buf, PATH_MAX, 0, UIO_READ);
+    int result = vfs_getcwd(&ku);
+    if (result) {
+        *retval = -1;
+        return result;
+    }
+
+    size_t path_str_size = 0;
+    if (!copyoutstr(k_buf, buf, buflen, &path_str_size)) {
+        *retval = -1;
+        return EFAULT;
+    }
+
+    *retval = path_str_size;
     return 0;
+
 }

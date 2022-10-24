@@ -83,7 +83,7 @@ proc_create(const char *name)
 	proc->p_cwd = NULL;
 
 	/* Proc's Filetable*/
-	proc->p_ft = create_filetable();
+	proc->p_ft = NULL;
 
 	return proc;
 }
@@ -209,6 +209,8 @@ proc_create_runprogram(const char *name)
 
 	/* VFS fields */
 
+	/* Process Filetable */
+	newproc->p_ft = create_filetable();
 	/*
 	 * Lock the current process to copy its current directory.
 	 * (We don't need to lock the new process, though, as we have
