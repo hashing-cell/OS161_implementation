@@ -7,6 +7,9 @@
 #include <vfs.h>
 #include <vnode.h>
 #include <lib.h>
+#include <current.h>
+#include <proc.h>
+#include <copyinout.h>
 
 /*
  * open() system call implementation
@@ -14,9 +17,10 @@
 int
 sys_open(const userptr_t filename, int flags, int *retval) 
 {
+    (void) retval;
     //(void) filename; (void) flags; (void) retval;
     struct vnode *opened_file;
-    size_t *ret_got;
+    size_t *ret_got = kmalloc(sizeof(PATH_MAX));
     char* file_dest  = kmalloc(sizeof(filename));
 
     if(!copyinstr(filename, file_dest, sizeof(filename), ret_got)) {
@@ -26,16 +30,16 @@ sys_open(const userptr_t filename, int flags, int *retval)
         return -1;
     }
     
-    if(!vfs_open(filename, flags, NULL, &opened_file)) {
+    if(!vfs_open(file_dest, flags, 0664, &opened_file)) {
         kfree(file_dest);
         //set errno?
         return -1;
     }
 
     //if successful, add to filetable
-    //create_ft_file(...)
-    //add_file_entry(...)
-
+    struct ft_file* f;
+    f = create_ft_file(opened_file, flags);
+    add_file_entry(curproc->p_ft, f);
 
     return 0;    
 }
