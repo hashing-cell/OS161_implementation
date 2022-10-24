@@ -57,9 +57,11 @@ sys_open(const char *filename, int flags, int *retval)
     }
     //if successful, add to filetable
     struct ft_file* f;
-    f = create_ft_file(opened_file, flags);
-    add_file_entry(curproc->p_ft, f);
+    f = ft_file_create(opened_file, flags);
+    add_ft_file(curproc->p_ft, f);
     *retval = 0;
+    
+    kfree(file_dest);
     return 0;    
 }
 

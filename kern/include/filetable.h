@@ -7,7 +7,7 @@
 
 struct ft_file {
     struct vnode *vn;
-    mode_t flags;
+    int flags;
     off_t offset;
     struct lock* lk_file;
 };
@@ -19,9 +19,11 @@ struct filetable {
     struct lock* lk_ft;
 };
 
-struct filetable* create_filetable(void);
-struct ft_file* create_ft_file(struct vnode*, mode_t);
-int destroy_filetable(void);
-int add_file_entry(struct filetable*, struct ft_file*);  //decide how to add files to ft, add to end or fill in holes first?
-void init_std(struct filetable*);
+struct filetable* filetable_create(void);
+void filetable_destroy(struct filetable*);
+struct ft_file* ft_file_create(struct vnode*, int);
+void ft_file_destroy(struct ft_file*);
+void filetable_destroy(struct filetable* ft);
+int add_ft_file(struct filetable*, struct ft_file*);  //decide how to add files to ft, add to end or fill in holes first?
+void init_stdio(struct filetable*);
 

@@ -210,7 +210,7 @@ proc_create_runprogram(const char *name)
 	/* VFS fields */
 
 	/* Process Filetable */
-	newproc->p_ft = create_filetable();
+	newproc->p_ft = filetable_create();
 	/*
 	 * Lock the current process to copy its current directory.
 	 * (We don't need to lock the new process, though, as we have
