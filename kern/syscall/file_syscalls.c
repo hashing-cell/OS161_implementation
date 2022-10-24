@@ -24,18 +24,20 @@ sys_open(const char *filename, int flags, int *retval)
     *retval = -1;
     struct vnode *opened_file;
     size_t ret_got = 0;
+    size_t path_len;
 
     if(filename == NULL) {
         return EFAULT;
     }
 
-    char* file_dest  = kmalloc(sizeof(filename)+1);
+    path_len = strlen(filename)+1;
+    char* file_dest  = kmalloc(path_len);
 
     if(file_dest == NULL) {
         return ENOMEM;
     }
 
-    int err = copyinstr((const_userptr_t)filename, file_dest, sizeof(filename), &ret_got);
+    int err = copyinstr((const_userptr_t)filename, file_dest, path_len, &ret_got);
     
     if(err)
     {
