@@ -4,6 +4,8 @@
 #include <syscall.h>
 #include <types.h>
 #include <kern/errno.h>
+#include <kern/stat.h>
+#include <kern/seek.h>
 #include <vfs.h>
 #include <vnode.h>
 #include <lib.h>
@@ -233,7 +235,66 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
 int
 sys_lseek(int fd, off_t pos, int whence, off_t *retval)
 {
-    (void) fd; (void) pos; (void) whence; (void) retval;
+    *retval = -1;
+    
+    if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
+        return EINVAL;
+    }
+    
+    if (fd < 0 || fd >= OPEN_MAX) {
+        return EINVAL;
+    }
+    
+    struct filetable *ft;
+    struct ft_file *f;
+    struct stat stat;
+    off_t new_pos;
+    
+    ft = curproc->p_ft;
+    if (ft == NULL) {
+        return EFAULT;
+    }
+    
+    lock_acquire(ft->lk_ft);
+    f = ft->file_entries[fd];
+    if (f == NULL) {
+        lock_release(ft->lk_ft);
+        return EFAULT;
+    }
+
+    lock_release(ft->lk_ft);    
+    lock_acquire(f->lk_file);    
+    
+    if (!VOP_ISSEEKABLE(f->vn)) {
+        lock_release(f->lk_file);
+        return ESPIPE;
+    }
+
+    VOP_STAT(f->vn, &stat);
+    
+    switch (whence) {
+        case (SEEK_SET):
+            new_pos = pos;
+            break;
+            
+        case (SEEK_CUR):
+            new_pos = f->offset + pos;
+            break;
+            
+        case (SEEK_END):
+            new_pos = stat.st_size + pos;
+            break;
+    }
+    
+    if (new_pos < 0) {
+        lock_release(f->lk_file);
+        return EINVAL;
+    }
+    
+    f->offset = new_pos;
+    lock_release(f->lk_file); 
+
+    *retval = new_pos;
     return 0;
 }
 
@@ -277,7 +338,63 @@ sys_close(int fd, int *retval)
 int
 sys_dup2(int oldfd, int newfd, int *retval)
 {
-    (void) oldfd; (void) newfd; (void) retval;
+    *retval = -1;
+    
+    if (oldfd < 0 || oldfd >= OPEN_MAX) {
+        return EBADF;
+    }
+    
+    if (newfd < 0 || newfd >= OPEN_MAX) {
+        return EBADF;
+    }
+    
+    if (oldfd == newfd) {
+        *retval = newfd;
+        return 0;
+    }
+    
+    struct filetable *ft;
+    struct ft_file *old_ft_file;
+    struct ft_file *new_ft_file;
+    struct ft_file *cloned_ft_file;
+    
+    ft = curproc->p_ft;
+    if (ft == NULL) {
+        return EFAULT;
+    }
+    
+    lock_acquire(ft->lk_ft);
+    old_ft_file = ft->file_entries[oldfd];
+    new_ft_file = ft->file_entries[newfd];
+    
+    if (old_ft_file == NULL) {
+        lock_release(ft->lk_ft);
+        return EFAULT;
+    }
+    
+    lock_acquire(old_ft_file->lk_file);
+    cloned_ft_file = ft_file_create(old_ft_file->vn, old_ft_file->flags);
+    if (cloned_ft_file == NULL) {
+        lock_release(old_ft_file->lk_file);
+        lock_release(ft->lk_ft);
+        return ENOMEM;
+    }
+
+    cloned_ft_file->offset = old_ft_file->offset;
+    lock_release(old_ft_file->lk_file);
+
+    if (new_ft_file != NULL) {
+        // already opened file.  Close it silently
+        ft_file_destroy(new_ft_file);
+        ft->num_opened--;
+        ft->file_entries[newfd] = NULL;
+    }
+
+    ft->file_entries[newfd] = cloned_ft_file;    
+    VOP_INCREF(cloned_ft_file->vn);
+    lock_release(ft->lk_ft);
+    
+    *retval = newfd;
     return 0;
 }
 

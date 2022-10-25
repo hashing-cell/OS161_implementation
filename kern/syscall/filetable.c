@@ -68,20 +68,25 @@ int add_ft_file(struct filetable *ft, struct ft_file *f, int *fid) {
 
     lock_acquire(ft->lk_ft);
 
-    ft->file_entries[ft->next_fid] = f;
-    *fid = ft->next_fid;
-    ft->num_opened++;
-
-    for(int i = 0; i < OPEN_MAX-3; i++) {
-        ft->next_fid++;
-        if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound
-            ft->next_fid = 3;
-        }
-        if(ft->file_entries[ft->next_fid] == NULL) {
-            break;
+    if(ft->file_entries[ft->next_fid] != NULL) {
+        for(int i = 0; i < OPEN_MAX-3; i++) {
+            ft->next_fid++;
+            if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound
+                ft->next_fid = 3;
+            }
+            if(ft->file_entries[ft->next_fid] == NULL) {
+                break;
+            }
         }
     }
-
+    ft->file_entries[ft->next_fid] = f;
+    
+    *fid = ft->next_fid;
+    ft->num_opened++;
+    ft->next_fid++;
+    if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound
+        ft->next_fid = 3;
+    }
     lock_release(ft->lk_ft);
 
     return 0;
