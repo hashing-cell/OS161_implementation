@@ -26,12 +26,16 @@ struct filetable* filetable_create(void) {
 void init_stdio(struct filetable* ft) {
     struct vnode *con_vn;
     char path[] = "con:";
+
+    //stdin is entry 0 with flag O_RDONLY
     vfs_open(path, O_RDONLY, 0664, &con_vn);
     lock_acquire(ft->lk_ft);
     ft->file_entries[0] = ft_file_create(con_vn, O_RDONLY);
     
     vfs_open(path, O_WRONLY, 0664, &con_vn);
+    //stdout is entry 1 with flag O_WRONLY
     ft->file_entries[1] = ft_file_create(con_vn, O_WRONLY);
+    //stderr is entry 1 with flag O_WRONLY
     ft->file_entries[2] = ft_file_create(con_vn, O_WRONLY);
     lock_release(ft->lk_ft);
 }
@@ -84,7 +88,7 @@ int add_ft_file(struct filetable *ft, struct ft_file *f, int *fid) {
     *fid = ft->next_fid;
     ft->num_opened++;
     ft->next_fid++;
-    if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound
+    if(ft->next_fid >= OPEN_MAX) {  //reached end of ft, wraparound to find next avail fid
         ft->next_fid = 3;
     }
     lock_release(ft->lk_ft);
