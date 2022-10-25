@@ -33,27 +33,24 @@ sys_open(const char *filename, int flags, int *retval)
         return EFAULT;
     }
 
-    file_dest  = kmalloc(PATH_MAX);
+    file_dest  = kmalloc(PATH_MAX);  //PATH_MAX = max file path len
     if(file_dest == NULL) {
         return ENOMEM;
     }
 
+    //copy filename from userspace to kernel
     int err = copyinstr((const_userptr_t)filename, file_dest, PATH_MAX, &path_len);
     
     if(err)
     {
-        //error for invalid copyin
         kfree(file_dest);
-        //set errno?
         return err;
     }
     
     err = vfs_open(file_dest, flags, 0664, &opened_file);
     if(err)
     {
-        //error for invalid copyin
         kfree(file_dest);
-        //set errno?
         return err;
     }
     //if successful, add to filetable
@@ -70,10 +67,10 @@ sys_open(const char *filename, int flags, int *retval)
         kfree(f);
         return err;  
     }
-    *retval = fid;
+    *retval = fid;  //set retval to file desc of opened file
     
     kfree(file_dest);
-    return 0;    
+    return 0; 
 }
 
 
@@ -295,6 +292,7 @@ sys_lseek(int fd, off_t pos, int whence, int32_t *retval, int32_t *retval1)
     f->offset = new_pos;
     lock_release(f->lk_file); 
 
+    //64bit return value, split retval into 32bit halves
     *retval = new_pos >> 32;
     *retval1 = new_pos;
     return 0;
@@ -308,11 +306,14 @@ sys_close(int fd, int *retval)
 {
     *retval = -1;
 
+    //check for fd out of range of file desc
     if(fd < 0 || fd >= OPEN_MAX) {
         return EBADF;
     }
 
     struct filetable *ft = curproc->p_ft;
+
+    //lock filetable before getting file entries
     lock_acquire(ft->lk_ft);
     struct ft_file *f = ft->file_entries[fd];
 
@@ -321,13 +322,14 @@ sys_close(int fd, int *retval)
         lock_release(ft->lk_ft);
         return EBADF;
     }
+    //lock file before closing
     lock_acquire(f->lk_file);
     vfs_close(f->vn);
     lock_release(f->lk_file);
 
     ft_file_destroy(f);
-    ft->file_entries[fd] = NULL;
-    ft->num_opened--;
+    ft->file_entries[fd] = NULL;  //remove closed file from filetable's file entries
+    ft->num_opened--;  //decrement num_opened now that 1 file has been closed
     lock_release(ft->lk_ft);
 
     *retval = 0;
