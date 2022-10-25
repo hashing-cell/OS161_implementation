@@ -21,7 +21,7 @@
  * open() system call implementation
  */
 int
-sys_open(const char *filename, int flags, int *retval) 
+sys_open(const userptr_t filename, int flags, int *retval) 
 {
     *retval = -1;
     struct vnode *opened_file;
@@ -38,8 +38,7 @@ sys_open(const char *filename, int flags, int *retval)
         return ENOMEM;
     }
 
-    //copy filename from userspace to kernel
-    int err = copyinstr((const_userptr_t)filename, file_dest, PATH_MAX, &path_len);
+    int err = copyinstr(filename, file_dest, PATH_MAX, &path_len);
     
     if(err)
     {
@@ -162,6 +161,7 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
     struct uio ku;
     char *k_buf;
 
+    // Check if user buffer is null
     if (buf == NULL) {
         *retval = -1;
         return EFAULT;
@@ -232,44 +232,50 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
 int
 sys_lseek(int fd, off_t pos, int whence, int32_t *retval, int32_t *retval1)
 {
-    *retval = -1;
-    *retval1 = -1;
-    
-    if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
-        return EINVAL;
-    }
-    
-    if (fd < 0 || fd >= OPEN_MAX) {
-        return EBADF;
-    }
-    
     struct filetable *ft;
     struct ft_file *f;
     struct stat stat;
     off_t new_pos;
+
+    *retval = -1;
+    *retval1 = -1;
     
+    // Check if whence is valid
+    if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
+        return EINVAL;
+    }
+    
+    // Check if fd is a valid one    
+    if (fd < 0 || fd >= OPEN_MAX) {
+        return EBADF;
+    }
+    
+    // Check if filetable is null just in case
     ft = curproc->p_ft;
     if (ft == NULL) {
         return EFAULT;
     }
     
+    // Check whether file entry exists
     lock_acquire(ft->lk_ft);
     f = ft->file_entries[fd];
     if (f == NULL) {
         lock_release(ft->lk_ft);
         return EBADF;
     }
+    lock_release(ft->lk_ft);
 
-    lock_release(ft->lk_ft);    
-    lock_acquire(f->lk_file);    
-    
+    // Check if the file is seekable
+    lock_acquire(f->lk_file);
     if (!VOP_ISSEEKABLE(f->vn)) {
         lock_release(f->lk_file);
         return ESPIPE;
     }
 
+    // Get info about the file. We primarly just need the size of the file
     VOP_STAT(f->vn, &stat);
     
+    // Calculate the new offset based off the arguments given
     switch (whence) {
         case SEEK_SET:
         new_pos = pos;
@@ -284,11 +290,13 @@ sys_lseek(int fd, off_t pos, int whence, int32_t *retval, int32_t *retval1)
         break;
     }
     
+    // If our position is negative we return an error
     if (new_pos < 0) {
         lock_release(f->lk_file);
         return EINVAL;
     }
     
+    // Otherwise if our operation is successful we update our offset in the filetable and return
     f->offset = new_pos;
     lock_release(f->lk_file); 
 
@@ -342,26 +350,29 @@ sys_close(int fd, int *retval)
 int
 sys_dup2(int oldfd, int newfd, int *retval)
 {
+    struct filetable *ft;
+    struct ft_file *old_ft_file;
+    struct ft_file *new_ft_file;
+    struct ft_file *cloned_ft_file;
+
     *retval = -1;
-    
+
+    // Check if both file descriptors are valid    
     if (oldfd < 0 || oldfd >= OPEN_MAX) {
         return EBADF;
     }
-    
+
     if (newfd < 0 || newfd >= OPEN_MAX) {
         return EBADF;
     }
     
+    // If the oldfd and newfd are the same then no further work is necessary
     if (oldfd == newfd) {
         *retval = newfd;
         return 0;
     }
     
-    struct filetable *ft;
-    struct ft_file *old_ft_file;
-    struct ft_file *new_ft_file;
-    struct ft_file *cloned_ft_file;
-    
+    // Check if filetable is null just in case
     ft = curproc->p_ft;
     if (ft == NULL) {
         return EFAULT;
@@ -371,11 +382,13 @@ sys_dup2(int oldfd, int newfd, int *retval)
     old_ft_file = ft->file_entries[oldfd];
     new_ft_file = ft->file_entries[newfd];
     
+    // Check whether file entry for the oldfd exists
     if (old_ft_file == NULL) {
         lock_release(ft->lk_ft);
         return EBADF;
     }
     
+    // We clone the file entry and copy all the data fields to the new entry
     lock_acquire(old_ft_file->lk_file);
     cloned_ft_file = ft_file_create(old_ft_file->vn, old_ft_file->flags);
     if (cloned_ft_file == NULL) {
@@ -386,7 +399,7 @@ sys_dup2(int oldfd, int newfd, int *retval)
 
     cloned_ft_file->offset = old_ft_file->offset;
     lock_release(old_ft_file->lk_file);
-
+    
     if (new_ft_file != NULL) {
         // already opened file.  Close it silently
         ft_file_destroy(new_ft_file);
@@ -411,11 +424,13 @@ sys_chdir(const userptr_t pathname, int *retval)
     char path_str[PATH_MAX];
     size_t path_str_size = 0;
     
+    // Copyin userspace pointer that contains the string to the pathname
     if (copyinstr(pathname, path_str, PATH_MAX, &path_str_size)) {
         *retval = -1;
         return EFAULT;
     }
     
+    // Set current directory, as a pathname using the virtual file system
     int result = vfs_chdir(path_str);
     if (result) {
         *retval = -1;
@@ -436,13 +451,23 @@ sys___getcwd(userptr_t buf, size_t buflen, int *retval)
     struct uio ku;
     char k_buf[PATH_MAX] = {0};
 
+    // Check if user buffer is null
+    if (buf == NULL) {
+        *retval = -1;
+        return EFAULT;
+    }
+
+    // Create uio block to recieve data
     uio_kinit(&iov, &ku, k_buf, PATH_MAX, 0, UIO_READ);
+
+    // Gets current directory using the virtual file system
     int result = vfs_getcwd(&ku);
     if (result) {
         *retval = -1;
         return result;
     }
 
+    // Copyout string describing current directory to userspace
     size_t path_str_size = 0;
     if (copyoutstr(k_buf, buf, buflen, &path_str_size)) {
         *retval = -1;

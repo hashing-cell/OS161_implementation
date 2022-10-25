@@ -185,7 +185,6 @@ test_openfile_limits()
 		if( (fd == 0) || (fd == 1) || (fd == 2))
 			err(1, "open for %s returned a reserved file descriptor",
 			    file);
-		printf("fd = %d\n", fd);
 		/* We do not assume that the underlying system will return
 		 * file descriptors as consecutive numbers, so we just remember
 		 * all that were returned, so we can close them. 
@@ -219,7 +218,6 @@ test_openfile_limits()
 	 */
 	for(i = 1; i < OPEN_MAX - 3; i++)
 	{
-		printf("close %d\n", openFDs[i]);
 		rv = close(openFDs[i]);
 		if (rv<0)
 			err(1, "%s: close file descriptor %d", file, i);
