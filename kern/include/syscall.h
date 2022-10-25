@@ -64,7 +64,7 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 /*
  * File handling system call declarations
  */
-int sys_open(const char *filename, int flags, int *retval);
+int sys_open(const userptr_t, int flags, int *retval);
 int sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval);
 int sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval);
 int sys_lseek(int fd, off_t pos, int whence, int32_t *retval, int32_t *retval1);

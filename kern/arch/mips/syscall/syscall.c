@@ -117,7 +117,7 @@ syscall(struct trapframe *tf)
 	    /* Add stuff here */
 
 	    case SYS_open:
-		err = sys_open((const char *)tf->tf_a0, tf->tf_a1, &retval);
+		err = sys_open((userptr_t)tf->tf_a0, tf->tf_a1, &retval);
 		break;
 
 	    case SYS_read:
@@ -171,11 +171,6 @@ syscall(struct trapframe *tf)
 		/* Success. */
 		tf->tf_v0 = retval;
 		tf->tf_v1 = retval1;
-
-		// if (retval64) {
-		// 	tf->tf_v0 = retval64 & 0xFFFFFFFF00000000;
-		// 	tf->tf_v1 = retval64 & (uint64_t) 0x00000000FFFFFFFF << 32;
-		// }
 		tf->tf_a3 = 0;      /* signal no error */
 	}
 

@@ -137,8 +137,6 @@ common_prog(int nargs, char **args)
 		return result;
 	}
 
-	//DELETE BY ASSIGNMENT 5 
-	while(1){}
 	/*
 	 * The new process will be destroyed when the program exits...
 	 * once you write the code for handling that.
@@ -711,8 +709,6 @@ menu(char *args)
 	char buf[64];
 
 	menu_execute(args, 1);
-
-	//while (true);
 	
 	while (1) {
 		kprintf("OS/161 kernel [? for menu]: ");
