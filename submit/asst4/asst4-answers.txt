@@ -1,4 +1,4 @@
-1. The ELF magic numbers are the first 4 bytes of the ELF file header. They are 0x7F, 'E', 'L', 'F'.  The ELF file header struct is defined in "src/kern/include/elf.h" as "Elf32_Ehdr". THe magic numbers are a way to quickly identify that this is a ELF format file.
+1. The ELF magic numbers are the first 4 bytes of the ELF file header. They are 0x7F, 'E', 'L', 'F'.  The ELF file header struct is defined in "src/kern/include/elf.h" as "Elf32_Ehdr". The magic numbers are a way to quickly identify that this is a ELF format file.
 
 2. These flags are defined by an enumeration in "src/kern/include/uio.h". UIO_USERISPACE refers to user process code, and UIO_USERSPACE refers to user process data. It is important to distinguish userspace data from kernel data (marked as UIO_SYSSPACE), since userspace code and data should not be trusted. Specifically, these flags are primarily used in uio.c, where data marked by UIO_SYSSPACE is data only transferred within the kernel and is manipulated using memmove(), while data marked by UIO_USERSPACE/UIO_USERISPACE is manipulated using copyin/copyout.
 
@@ -12,7 +12,7 @@
 
 7. userptr_t is defined in "src/kern/include/types.h" and the description states that it is a pointer to one-byte struct. This is done to distinguish a userspace pointer from other pointer types.
 
-8. The exception code for a system call is 8, defined by EX_SYS macro in "src/kern/arch/mips/include/trapeframe.h"
+8. The exception code for a system call is 8, defined by EX_SYS macro in "src/kern/arch/mips/include/trapframe.h"
 
 9. The size of a MIPS instruction is 4 bytes. This is evidenced by "src/kern/arch/mips/syscall/syscall.c" at the comments at line 136, where the function increments the program counter of the trapframe by 4 bytes shortly before returning to avoid repeating the syscall instruction. 
 
