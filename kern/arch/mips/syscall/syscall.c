@@ -168,15 +168,11 @@ syscall(struct trapframe *tf)
 	else {
 		/* Success. */
 		tf->tf_v0 = retval;
-		tf->tf_v1 = retval1;
 
-		//value for tf_v0 wasn't shifted right so wouldn't it take 0? (most sig 32 bits truncated)
-		//same for tf_v1, not shifted right after bitmask
-		//replaced w the above ^
-		// if (retval64) {
-		// 	tf->tf_v0 = retval64 & 0xFFFFFFFF00000000;
-		// 	tf->tf_v1 = retval64 & (uint64_t) 0x00000000FFFFFFFF << 32;
-		// }
+		if (retval64) {
+			tf->tf_v0 = retval64 & 0xFFFFFFFF00000000;
+			tf->tf_v1 = retval64 & (uint64_t) 0x00000000FFFFFFFF << 32;
+		}
 		tf->tf_a3 = 0;      /* signal no error */
 	}
 

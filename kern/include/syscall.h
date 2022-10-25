@@ -67,7 +67,7 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 int sys_open(const char *filename, int flags, int *retval);
 int sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval);
 int sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval);
-int sys_lseek(int fd, off_t pos, int whence, int32_t *retval, int32_t *retval1);
+int sys_lseek(int fd, off_t pos, int whence, off_t *retval);
 int sys_close(int fd, int *retval);
 int sys_dup2(int oldfd, int newfd, int *retval);
 int sys_chdir(const userptr_t pathname, int *retval);
