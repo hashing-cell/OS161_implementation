@@ -81,7 +81,7 @@ syscall(struct trapframe *tf)
 {
 	int callno;
 	int32_t retval;
-	int64_t retval64;
+	int32_t retval1;
 	int err;
 
 	KASSERT(curthread != NULL);
@@ -100,7 +100,7 @@ syscall(struct trapframe *tf)
 	 */
 
 	retval = 0;
-	retval64 = 0;
+	retval1 = 0;
 
 	switch (callno) {
 		int whence;
@@ -129,8 +129,10 @@ syscall(struct trapframe *tf)
 		break;
 
 	    case SYS_lseek:
-		copyin((userptr_t)((tf->tf_sp) + 16), &whence, sizeof(int));
-		err = sys_lseek(tf->tf_a0, (((off_t)tf->tf_a2 << 32) | tf->tf_a3), whence, &retval64);
+		err = copyin((userptr_t)((tf->tf_sp) + 16), &whence, sizeof(int));
+		if (!err) {
+			err = sys_lseek(tf->tf_a0, (((off_t)tf->tf_a2 << 32) | tf->tf_a3), whence, &retval, &retval1);
+		}
 		break;
 
 	    case SYS_close:
@@ -168,11 +170,12 @@ syscall(struct trapframe *tf)
 	else {
 		/* Success. */
 		tf->tf_v0 = retval;
+		tf->tf_v1 = retval1;
 
-		if (retval64) {
-			tf->tf_v0 = retval64 & 0xFFFFFFFF00000000;
-			tf->tf_v1 = retval64 & (uint64_t) 0x00000000FFFFFFFF << 32;
-		}
+		// if (retval64) {
+		// 	tf->tf_v0 = retval64 & 0xFFFFFFFF00000000;
+		// 	tf->tf_v1 = retval64 & (uint64_t) 0x00000000FFFFFFFF << 32;
+		// }
 		tf->tf_a3 = 0;      /* signal no error */
 	}
 

@@ -25,22 +25,20 @@ sys_open(const char *filename, int flags, int *retval)
 {
     *retval = -1;
     struct vnode *opened_file;
-    size_t ret_got = 0;
     size_t path_len;
     int fid;
+    char *file_dest;
 
     if(filename == NULL) {
         return EFAULT;
     }
 
-    path_len = strlen(filename)+1;
-    char* file_dest  = kmalloc(path_len);
-
+    file_dest  = kmalloc(PATH_MAX);
     if(file_dest == NULL) {
         return ENOMEM;
     }
 
-    int err = copyinstr((const_userptr_t)filename, file_dest, path_len, &ret_got);
+    int err = copyinstr((const_userptr_t)filename, file_dest, PATH_MAX, &path_len);
     
     if(err)
     {
@@ -141,11 +139,13 @@ sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval)
     curproc->p_ft->file_entries[fd]->offset += nbytes_read;
 
     // Copyout to user provided buffer
-    if (copyout(k_buf, buf, nbytes_read)) {
-        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-        kfree(k_buf);
-        *retval = -1;
-        return EFAULT;
+    if (nbytes_read != 0) {
+        if (copyout(k_buf, buf, nbytes_read)) {
+            lock_release(curproc->p_ft->file_entries[fd]->lk_file);
+            kfree(k_buf);
+            *retval = -1;
+            return EFAULT;
+        }
     }
 
     lock_release(curproc->p_ft->file_entries[fd]->lk_file);
@@ -233,16 +233,17 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
  * lseek() system call implementation
  */
 int
-sys_lseek(int fd, off_t pos, int whence, off_t *retval)
+sys_lseek(int fd, off_t pos, int whence, int32_t *retval, int32_t *retval1)
 {
     *retval = -1;
+    *retval1 = -1;
     
     if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
         return EINVAL;
     }
     
     if (fd < 0 || fd >= OPEN_MAX) {
-        return EINVAL;
+        return EBADF;
     }
     
     struct filetable *ft;
@@ -259,7 +260,7 @@ sys_lseek(int fd, off_t pos, int whence, off_t *retval)
     f = ft->file_entries[fd];
     if (f == NULL) {
         lock_release(ft->lk_ft);
-        return EFAULT;
+        return EBADF;
     }
 
     lock_release(ft->lk_ft);    
@@ -273,17 +274,17 @@ sys_lseek(int fd, off_t pos, int whence, off_t *retval)
     VOP_STAT(f->vn, &stat);
     
     switch (whence) {
-        case (SEEK_SET):
-            new_pos = pos;
-            break;
+        case SEEK_SET:
+        new_pos = pos;
+        break;
             
-        case (SEEK_CUR):
-            new_pos = f->offset + pos;
-            break;
+        case SEEK_CUR:
+        new_pos = f->offset + pos;
+        break;
             
-        case (SEEK_END):
-            new_pos = stat.st_size + pos;
-            break;
+        case SEEK_END:
+        new_pos = stat.st_size + pos;
+        break;
     }
     
     if (new_pos < 0) {
@@ -294,7 +295,8 @@ sys_lseek(int fd, off_t pos, int whence, off_t *retval)
     f->offset = new_pos;
     lock_release(f->lk_file); 
 
-    *retval = new_pos;
+    *retval = new_pos >> 32;
+    *retval1 = new_pos;
     return 0;
 }
 
@@ -369,7 +371,7 @@ sys_dup2(int oldfd, int newfd, int *retval)
     
     if (old_ft_file == NULL) {
         lock_release(ft->lk_ft);
-        return EFAULT;
+        return EBADF;
     }
     
     lock_acquire(old_ft_file->lk_file);
