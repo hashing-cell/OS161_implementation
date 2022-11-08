@@ -85,6 +85,9 @@ proc_create(const char *name)
 	/* Proc's Filetable*/
 	proc->p_ft = NULL;
 
+	/* Proc's PID*/
+	proc->pid = -1;
+
 	return proc;
 }
 
