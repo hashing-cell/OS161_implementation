@@ -261,10 +261,9 @@ proc_create_sysfork(struct proc **p_new_forked_proc)
 	/* VFS fields */
 
 	/* Process Filetable */
-	if (filetable_dup(curproc->p_ft, &(*p_new_forked_proc)->p_ft)) {
-		proc_destroy(*p_new_forked_proc);
-		return ENOMEM;
-	}
+	(*p_new_forked_proc)->p_ft = filetable_create();
+
+	filetable_dup(curproc->p_ft, (*p_new_forked_proc)->p_ft);
 	/*
 	 * Lock the current process to copy its current directory.
 	 * (We don't need to lock the new process, though, as we have

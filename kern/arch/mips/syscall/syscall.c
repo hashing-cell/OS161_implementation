@@ -159,9 +159,9 @@ syscall(struct trapframe *tf)
 		err = sys_execv((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1);
 		break;
 		
-	    case SYS_waitpid:
-		err = sys_waitpid(tf->tf_a0, (userptr_t)tf->tf_a1, tf->tf_a2, &retval);
-		break;
+	    // case SYS_waitpid:
+		// err = sys_waitpid(tf->tf_a0, (userptr_t)tf->tf_a1, tf->tf_a2, &retval);
+		// break;
 
 	    case SYS__exit:
 		err = sys__exit(tf->tf_a0);
@@ -201,20 +201,4 @@ syscall(struct trapframe *tf)
 	KASSERT(curthread->t_curspl == 0);
 	/* ...or leak any spinlocks */
 	KASSERT(curthread->t_iplhigh_count == 0);
-}
-
-/*
- * Enter user mode for a newly forked process.
- *
- * The data contained in the pointer passed as the 
- * argument to this function must be located on the stack
- */
-void
-enter_forked_process(struct trapframe *tf)
-{
-    tf->tf_v0 = 0;
-    tf->tf_a3 = 0;
-    tf->tf_epc += 4;
-
-	mips_usermode(tf);
 }

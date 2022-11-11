@@ -24,7 +24,7 @@ struct filetable {
 };
 
 struct filetable* filetable_create(void);
-int filetable_dup(const struct filetable*, struct filetable **);
+void filetable_dup(const struct filetable*, struct filetable *);
 void filetable_destroy(struct filetable*);
 struct ft_file* ft_file_create(struct vnode*, int);
 void ft_file_destroy(struct ft_file*);

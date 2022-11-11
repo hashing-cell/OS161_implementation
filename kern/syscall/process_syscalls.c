@@ -25,8 +25,13 @@ begin_forked_process(void *p, unsigned long arg)
 
     struct trapframe tf;
     memcpy(&tf, p, sizeof(struct trapframe));
+    tf.tf_v0 = 0;
+    tf.tf_a3 = 0;
+    tf.tf_epc += 4;
     kfree(p);
-    enter_forked_process(&tf);
+    as_activate();
+    
+    mips_usermode(&tf);
 }
 
 int
