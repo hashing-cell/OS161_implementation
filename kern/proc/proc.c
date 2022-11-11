@@ -48,6 +48,7 @@
 #include <current.h>
 #include <addrspace.h>
 #include <vnode.h>
+#include <proctable.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -100,6 +101,7 @@ proc_create(const char *name)
 void
 proc_destroy(struct proc *proc)
 {
+	proctable_unassign_pid(proc);
 	/*
 	 * You probably want to destroy and null out much of the
 	 * process (particularly the address space) at exit time if
@@ -188,6 +190,8 @@ proc_bootstrap(void)
 	if (kproc == NULL) {
 		panic("proc_create for kproc failed\n");
 	}
+
+	proctable_assign_kern_pid(kproc);
 }
 
 /*
@@ -203,6 +207,11 @@ proc_create_runprogram(const char *name)
 
 	newproc = proc_create(name);
 	if (newproc == NULL) {
+		return NULL;
+	}
+	
+	if (proctable_assign_pid(newproc)) {
+		proc_destroy(newproc);
 		return NULL;
 	}
 
@@ -228,6 +237,49 @@ proc_create_runprogram(const char *name)
 
 	return newproc;
 }
+
+/*
+ * Create a proc for use by sys_fork.
+ *
+ */
+int
+proc_create_sysfork(struct proc **p_new_forked_proc)
+{
+	*p_new_forked_proc = proc_create(curproc->p_name);
+	if (*p_new_forked_proc == NULL) {
+		return ENOMEM;
+	}
+	
+	if (proctable_assign_pid(*p_new_forked_proc)) {
+		proc_destroy(*p_new_forked_proc);
+		return ENPROC;
+	}
+
+	/* VM fields */
+	(*p_new_forked_proc)->p_addrspace = NULL;
+
+	/* VFS fields */
+
+	/* Process Filetable */
+	if (filetable_dup(curproc->p_ft, &(*p_new_forked_proc)->p_ft)) {
+		proc_destroy(*p_new_forked_proc);
+		return ENOMEM;
+	}
+	/*
+	 * Lock the current process to copy its current directory.
+	 * (We don't need to lock the new process, though, as we have
+	 * the only reference to it.)
+	 */
+	spinlock_acquire(&curproc->p_lock);
+	if (curproc->p_cwd != NULL) {
+		VOP_INCREF(curproc->p_cwd);
+		(*p_new_forked_proc)->p_cwd = curproc->p_cwd;
+	}
+	spinlock_release(&curproc->p_lock);
+
+	return 0;
+}
+
 
 /*
  * Add a thread to a process. Either the thread or the process might

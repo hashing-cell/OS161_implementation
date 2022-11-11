@@ -23,6 +23,38 @@ struct filetable* filetable_create(void) {
     return ft;
 }
 
+int filetable_dup(const struct filetable* old_ft, struct filetable **new_ft) {
+    *new_ft = kmalloc(sizeof(struct filetable));
+    if (*new_ft == NULL) {
+        return ENOMEM;
+    }
+
+    (*new_ft)->lk_ft = lock_create("filetable lock");
+    if ((*new_ft)->lk_ft == NULL) {
+        return ENOMEM;
+    }
+
+    lock_acquire(old_ft->lk_ft);
+    (*new_ft)->num_opened = old_ft->num_opened;
+    (*new_ft)->next_fid = old_ft->next_fid;
+    for (int i = 0; i < OPEN_MAX; i++) {
+        lock_acquire(old_ft->file_entries[i]->lk_file);
+        (*new_ft)->file_entries[i] = ft_file_create(old_ft->file_entries[i]->vn, old_ft->file_entries[i]->flags);
+        if ((*new_ft)->file_entries[i] == NULL) {
+            lock_release(old_ft->file_entries[i]->lk_file);
+            lock_release(old_ft->lk_ft);
+            return ENOMEM;
+        }
+        (*new_ft)->file_entries[i]->offset = old_ft->file_entries[i]->offset;
+
+        VOP_INCREF((*new_ft)->file_entries[i]->vn);
+        lock_release(old_ft->file_entries[i]->lk_file);
+    }
+    lock_release(old_ft->lk_ft);
+
+    return 0;
+}
+
 void init_stdio(struct filetable* ft) {
     struct vnode *con_vn;
     char path[] = "con:";

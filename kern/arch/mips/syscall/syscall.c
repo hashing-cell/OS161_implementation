@@ -206,13 +206,15 @@ syscall(struct trapframe *tf)
 /*
  * Enter user mode for a newly forked process.
  *
- * This function is provided as a reminder. You need to write
- * both it and the code that calls it.
- *
- * Thus, you can trash it and do things another way if you prefer.
+ * The data contained in the pointer passed as the 
+ * argument to this function must be located on the stack
  */
 void
 enter_forked_process(struct trapframe *tf)
 {
-	(void)tf;
+    tf->tf_v0 = 0;
+    tf->tf_a3 = 0;
+    tf->tf_epc += 4;
+
+	mips_usermode(tf);
 }

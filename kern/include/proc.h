@@ -73,6 +73,9 @@ void proc_bootstrap(void);
 /* Create a fresh process for use by runprogram(). */
 struct proc *proc_create_runprogram(const char *name);
 
+/* Create a fresh process for use by sys_fork(). Returns an error code, or 0 if successful*/
+int proc_create_sysfork(struct proc **p_new_forked_proc);
+
 /* Destroy a process. */
 void proc_destroy(struct proc *proc);
 

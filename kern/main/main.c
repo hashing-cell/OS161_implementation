@@ -40,6 +40,7 @@
 #include <clock.h>
 #include <thread.h>
 #include <proc.h>
+#include <proctable.h>
 #include <current.h>
 #include <synch.h>
 #include <vm.h>
@@ -107,6 +108,7 @@ boot(void)
 
 	/* Early initialization. */
 	ram_bootstrap();
+	proctable_bootstrap();
 	proc_bootstrap();
 	thread_bootstrap();
 	hardclock_bootstrap();
