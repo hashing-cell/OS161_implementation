@@ -100,14 +100,18 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
     }
 
     // We sleep and hold here if the child process is not finished
+    lock_acquire(child_proc->wait_lock);
     int proc_state = child_proc->proc_state;
     while (proc_state != FINISHED) {
         cv_wait(child_proc->wait_signal, child_proc->wait_lock);
         proc_state = child_proc->proc_state;
     }
+    lock_release(child_proc->wait_lock);
 
     // After collecting the child's exit code, we can allow it to terminate
+    lock_acquire(child_proc->exit_lock);
     cv_broadcast(child_proc->exit_signal, child_proc->exit_lock);
+    lock_release(child_proc->exit_lock);
 
     if (status != NULL) {
         int err = copyout(&child_proc->exit_code, status, sizeof(int));

@@ -86,7 +86,7 @@ proc_create(const char *name)
 
 	/* Proc's Filetable*/
 	proc->p_ft = filetable_create();
-	if (proc->p_ft) {
+	if (proc->p_ft == NULL) {
 		kfree(proc->p_name);
 		kfree(proc);
 		return NULL;
@@ -233,8 +233,43 @@ proc_destroy(struct proc *proc)
 		as_destroy(as);
 	}
 
+	int num_threadarray = threadarray_num(&proc->p_threads);
+	for (int i = 0; i < num_threadarray; i++){
+		threadarray_remove(&proc->p_threads, 0);
+	}
+
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
+
+	int num_procs = array_num(proc->children);
+	for (int i = 0; i < num_procs; i++){
+		array_remove(proc->children, 0);
+	}
+
+	if (proc->children) {
+		array_destroy(proc->children);
+		proc->children = NULL;
+	}
+
+	if (proc->exit_lock) {
+		lock_destroy(proc->exit_lock);
+		proc->exit_lock = NULL;
+	}
+
+	if (proc->exit_signal) {
+		cv_destroy(proc->exit_signal);
+		proc->exit_signal = NULL;
+	}
+
+	if (proc->wait_lock) {
+		lock_destroy(proc->wait_lock);
+		proc->wait_lock = NULL;
+	}
+
+	if (proc->wait_signal) {
+		cv_destroy(proc->wait_signal);
+		proc->wait_signal = NULL;
+	}
 
 	kfree(proc->p_name);
 	kfree(proc);
@@ -477,7 +512,9 @@ proc_exit(int exit_code, int w_origin) {
 			break;
 	}
 	
+	lock_acquire(curproc->wait_lock);
 	cv_broadcast(curproc->wait_signal, curproc->wait_lock);
+	lock_release(curproc->wait_lock);
 
 	// We check their children
 	// - we wake up all finished children (finished children will destroy themselves after wake)
@@ -485,11 +522,13 @@ proc_exit(int exit_code, int w_origin) {
 	int num_child_procs = array_num(curproc->children);
 	for (int i = 0; i < num_child_procs; i++) {
 		struct proc *child_proc = array_get(curproc->children, i);
+		lock_acquire(child_proc->exit_lock);
 		if (child_proc->proc_state == FINISHED) {
 			cv_broadcast(child_proc->exit_signal, child_proc->exit_lock);
 		} else if (child_proc->proc_state == NORMAL) {
 			child_proc->proc_state = ORPHAN;
 		}
+		lock_release(child_proc->exit_lock);
 	}
 
 
@@ -497,10 +536,10 @@ proc_exit(int exit_code, int w_origin) {
 	// Otherwise we destroy this process immediately
 	if (curproc->proc_state == NORMAL) {
 		curproc->proc_state = FINISHED;
+		lock_acquire(curproc->exit_lock);
 		cv_wait(curproc->exit_signal, curproc->exit_lock);
+		lock_release(curproc->exit_lock);
 	}
 
-	proc_destroy(curproc);
-
-	thread_exit();
+	thread_proc_exit();
 }

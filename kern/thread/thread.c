@@ -812,6 +812,42 @@ thread_exit(void)
 }
 
 /*
+ * Cause the current thread to exit.
+ *
+ * Used for exiting user processes
+ * 
+ * Does not return.
+ */
+void
+thread_proc_exit(void)
+{
+	struct thread *cur;
+
+	cur = curthread;
+
+	/*
+	 * Detach from our process. You might need to move this action
+	 * around, depending on how your wait/exit works.
+	 */
+	proc_remthread(cur);
+
+	/* Make sure we *are* detached (move this only if you're sure!) */
+	KASSERT(cur->t_proc == NULL);
+
+	/* Check the stack guard band. */
+	thread_checkstack(cur);
+
+	if (curproc) {
+		proc_destroy(curproc);
+	}
+
+	/* Interrupts off on this processor */
+        splhigh();
+	thread_switch(S_ZOMBIE, NULL, NULL);
+	panic("braaaaaaaiiiiiiiiiiinssssss\n");
+}
+
+/*
  * Yield the cpu to another process, but stay runnable.
  */
 void
