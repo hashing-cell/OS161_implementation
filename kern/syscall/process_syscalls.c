@@ -60,7 +60,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
     }
     memcpy(child_tf, tf, sizeof(struct trapframe));
 
-    err = thread_fork(curthread->t_name, child_proc, begin_forked_process, (void *) child_tf, 0);
+    err = thread_fork("child process", child_proc, begin_forked_process, (void *) child_tf, 0);
     if (err) {
         proc_destroy(child_proc);
         kfree(child_tf);

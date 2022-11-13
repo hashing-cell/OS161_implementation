@@ -39,9 +39,17 @@
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
 #include <filetable.h>
+#include <array.h>
 
 struct addrspace;
 struct vnode;
+
+typedef enum {
+	INIT,
+	NORMAL,
+	FINISHED,
+	ORPHAN
+} proc_state_t;
 
 /*
  * Process structure.
@@ -62,6 +70,16 @@ struct proc {
 
 	/* process tracking */
 	pid_t pid;
+	proc_state_t proc_state;
+	pid_t parent_pid;
+	struct array *children;
+
+	// Process saves exit code here and continues to exist even after finished until it becomes orphaned
+	int exit_code;
+
+	// For waitpid
+	struct lock *wait_lock;
+	struct cv *wait_signal;
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */

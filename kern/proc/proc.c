@@ -84,10 +84,46 @@ proc_create(const char *name)
 	proc->p_cwd = NULL;
 
 	/* Proc's Filetable*/
-	proc->p_ft = NULL;
+	proc->p_ft = filetable_create();
+	if (proc->p_ft) {
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
 
-	/* Proc's PID*/
+	/* Proc state */
 	proc->pid = -1;
+	proc->proc_state = INIT;
+	proc->parent_pid = -1;
+	proc->exit_code = -1;
+
+	proc->children = array_create();
+	if (proc->children == NULL) {
+		filetable_destroy(proc->p_ft);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+
+	proc->wait_lock = lock_create("waitpid lock");
+	if (proc->wait_lock == NULL) {
+		array_destroy(proc->children);
+		filetable_destroy(proc->p_ft);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	
+	proc->wait_signal = cv_create("waitpid cv");
+	if (proc->wait_lock == NULL) {
+		lock_destroy(proc->wait_lock);
+		array_destroy(proc->children);
+		filetable_destroy(proc->p_ft);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	
 
 	return proc;
 }
@@ -222,7 +258,7 @@ proc_create_runprogram(const char *name)
 	/* VFS fields */
 
 	/* Process Filetable */
-	newproc->p_ft = filetable_create();
+	init_stdio(newproc->p_ft);
 	/*
 	 * Lock the current process to copy its current directory.
 	 * (We don't need to lock the new process, though, as we have
@@ -261,8 +297,6 @@ proc_create_sysfork(struct proc **p_new_forked_proc)
 	/* VFS fields */
 
 	/* Process Filetable */
-	(*p_new_forked_proc)->p_ft = filetable_create();
-
 	filetable_dup(curproc->p_ft, (*p_new_forked_proc)->p_ft);
 	/*
 	 * Lock the current process to copy its current directory.

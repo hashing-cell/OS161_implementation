@@ -8,6 +8,7 @@
 #include <synch.h>
 #include <kern/errno.h>
 
+#define NO_PID 0
 #define KERN_PID 1
 
 struct proctable {

@@ -15,7 +15,6 @@ struct filetable* filetable_create(void) {
     ft->lk_ft = lock_create("filetable lock");
     ft->num_opened = 3;  //stdio & stderr opened
     ft->next_fid = 3;    //1st 3 file desc to be used for stdio & stderr, start at idx 3
-    init_stdio(ft);
     for(int i = 3; i < OPEN_MAX; i++) {  //setup 1st 3 file desc to be used for stdio & stderr      
         ft->file_entries[i] = NULL;
     } 
