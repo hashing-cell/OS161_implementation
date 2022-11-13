@@ -138,9 +138,11 @@ common_prog(int nargs, char **args)
 	}
 
 	/*
-	 * The new process will be destroyed when the program exits...
-	 * once you write the code for handling that.
+	 * Wait for the process to finish
 	 */
+	int retval;
+	(void) retval;
+	sys_waitpid(proc->pid, NULL, 0, &retval);
 
 	return 0;
 }

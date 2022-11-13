@@ -311,8 +311,8 @@ proc_create_runprogram(const char *name)
 	}
 
 	/* Process state */
-	newproc->proc_state = ORPHAN; //Since this is the first process, we there is no parent
-	newproc->parent_pid = NO_PID;
+	newproc->proc_state = NORMAL; //Since this is the first process, we there is no parent
+	newproc->parent_pid = KERN_PID;
 
 	/* VM fields */
 
