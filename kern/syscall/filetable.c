@@ -9,20 +9,28 @@
 #include <vfs.h>
 
 
-struct filetable* filetable_create(void) {
+struct 
+filetable* filetable_create(void) {
     struct filetable *ft;
     ft = kmalloc(sizeof(struct filetable));
+    if (ft == NULL) {
+        return NULL;
+    }
     ft->lk_ft = lock_create("filetable lock");
-    ft->num_opened = 3;  //stdio & stderr opened
-    ft->next_fid = 3;    //1st 3 file desc to be used for stdio & stderr, start at idx 3
-    for(int i = 3; i < OPEN_MAX; i++) {  //setup 1st 3 file desc to be used for stdio & stderr      
+    if (ft->lk_ft == NULL) {
+        return NULL;
+    }
+    ft->num_opened = 0;
+    ft->next_fid = 0;
+    for(int i = 0; i < OPEN_MAX; i++) {     
         ft->file_entries[i] = NULL;
     } 
 
     return ft;
 }
 
-void filetable_dup(const struct filetable* old_ft, struct filetable *new_ft) {
+void 
+filetable_dup(const struct filetable* old_ft, struct filetable *new_ft) {
     lock_acquire(old_ft->lk_ft);
     new_ft->num_opened = old_ft->num_opened;
     new_ft->next_fid = old_ft->next_fid;
@@ -37,13 +45,16 @@ void filetable_dup(const struct filetable* old_ft, struct filetable *new_ft) {
     lock_release(old_ft->lk_ft);
 }
 
-void init_stdio(struct filetable* ft) {
+void 
+init_stdio(struct filetable* ft) {
     struct vnode *con_vn;
     char path[] = "con:";
 
     //stdin is entry 0 with flag O_RDONLY
-    vfs_open(path, O_RDONLY, 0664, &con_vn);
     lock_acquire(ft->lk_ft);
+    vfs_open(path, O_RDONLY, 0664, &con_vn);
+    ft->num_opened = 3;
+    ft->next_fid = 3;
     ft->file_entries[0] = ft_file_create(con_vn, O_RDONLY);
     
     vfs_open(path, O_WRONLY, 0664, &con_vn);
@@ -54,7 +65,8 @@ void init_stdio(struct filetable* ft) {
     lock_release(ft->lk_ft);
 }
 
-struct ft_file* ft_file_create(struct vnode* v, int in_flags) {
+struct ft_file* 
+ft_file_create(struct vnode* v, int in_flags) {
     struct ft_file *f;
     f = kmalloc(sizeof(struct ft_file));
 
@@ -66,11 +78,15 @@ struct ft_file* ft_file_create(struct vnode* v, int in_flags) {
     f->offset = 0;
     f->flags = in_flags;
     f->lk_file = lock_create("ft_file lock");
+    if (f->lk_file == NULL) {
+        return NULL;
+    }
     
     return f;
 }
 
-void ft_file_destroy(struct ft_file* f) {
+void 
+ft_file_destroy(struct ft_file* f) {
     KASSERT(f != NULL);
 
     lock_destroy(f->lk_file);
@@ -79,7 +95,8 @@ void ft_file_destroy(struct ft_file* f) {
 
 //return error code or 0 if succeeded
 //return file desc in fid param
-int add_ft_file(struct filetable *ft, struct ft_file *f, int *fid) {
+int 
+add_ft_file(struct filetable *ft, struct ft_file *f, int *fid) {
     if(ft->num_opened >= OPEN_MAX) {
         return EMFILE;
     }
@@ -110,13 +127,16 @@ int add_ft_file(struct filetable *ft, struct ft_file *f, int *fid) {
     return 0;
 }
 
-void filetable_destroy(struct filetable* ft) {
+void 
+filetable_destroy(struct filetable* ft) {
     KASSERT(ft != NULL);
 
     lock_destroy(ft->lk_ft);
 
     for(int i = 0; i < OPEN_MAX; i++) {
-        ft_file_destroy(ft->file_entries[i]);
+        if (ft->file_entries[i] != NULL) {
+            ft_file_destroy(ft->file_entries[i]);
+        }
     }
 
     kfree(ft);
