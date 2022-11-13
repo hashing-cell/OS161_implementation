@@ -29,4 +29,5 @@ void proctable_assign_kern_pid(struct proc *proc);
 // removes a process from the process table, should be done before the process itself is destroyed
 void proctable_unassign_pid(struct proc *proc);
 
+struct proc *proctable_get_proc(pid_t pid);
 #endif

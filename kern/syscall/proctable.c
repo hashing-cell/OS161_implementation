@@ -2,7 +2,8 @@
 
 struct proctable *proctable;
 
-void proctable_bootstrap(void)
+void 
+proctable_bootstrap(void)
 {
     proctable = kmalloc(sizeof(struct proctable));
     if (proctable == NULL) {
@@ -20,7 +21,8 @@ void proctable_bootstrap(void)
     }
 }
 
-int proctable_assign_pid(struct proc *proc)
+int
+proctable_assign_pid(struct proc *proc)
 {
     lock_acquire(proctable->lk_pt);
     if (proctable->proc_entries[proctable->next_pid] == NULL) {
@@ -55,14 +57,24 @@ int proctable_assign_pid(struct proc *proc)
     return ENPROC;
 }
 
-void proctable_assign_kern_pid(struct proc *proc)
+void
+proctable_assign_kern_pid(struct proc *proc)
 {
     proctable->proc_entries[KERN_PID] = proc;
     proc->pid = KERN_PID;
 }
 
-void proctable_unassign_pid(struct proc *proc)
+void
+proctable_unassign_pid(struct proc *proc)
 {
+    lock_acquire(proctable->lk_pt);
     proctable->proc_entries[proc->pid] = NULL;
     proc->pid = -1;
+    lock_release(proctable->lk_pt);
+}
+
+struct proc *
+proctable_get_proc(pid_t pid)
+{
+    return proctable->proc_entries[pid];
 }

@@ -251,6 +251,10 @@ proc_create_runprogram(const char *name)
 		return NULL;
 	}
 
+	/* Process state */
+	newproc->proc_state = ORPHAN; //Since this is the first process, we there is no parent
+	newproc->parent_pid = NO_PID;
+
 	/* VM fields */
 
 	newproc->p_addrspace = NULL;
@@ -281,7 +285,7 @@ proc_create_runprogram(const char *name)
 int
 proc_create_sysfork(struct proc **p_new_forked_proc)
 {
-	*p_new_forked_proc = proc_create(curproc->p_name);
+	*p_new_forked_proc = proc_create("Forked process");
 	if (*p_new_forked_proc == NULL) {
 		return ENOMEM;
 	}
@@ -289,6 +293,14 @@ proc_create_sysfork(struct proc **p_new_forked_proc)
 	if (proctable_assign_pid(*p_new_forked_proc)) {
 		proc_destroy(*p_new_forked_proc);
 		return ENPROC;
+	}
+
+	/* Process state */
+	(*p_new_forked_proc)->proc_state = NORMAL;
+	(*p_new_forked_proc)->parent_pid = curproc->pid;
+
+	if (array_add(curproc->children, *p_new_forked_proc, NULL)) {
+		return ENOMEM;
 	}
 
 	/* VM fields */
