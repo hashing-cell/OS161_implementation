@@ -511,10 +511,6 @@ proc_exit(int exit_code, int w_origin) {
 			curproc->exit_code = _MKWAIT_STOP(exit_code);
 			break;
 	}
-	
-	lock_acquire(curproc->wait_lock);
-	cv_broadcast(curproc->wait_signal, curproc->wait_lock);
-	lock_release(curproc->wait_lock);
 
 	// We check their children
 	// - we wake up all finished children (finished children will destroy themselves after wake)
@@ -536,6 +532,13 @@ proc_exit(int exit_code, int w_origin) {
 	// Otherwise we destroy this process immediately
 	if (curproc->proc_state == NORMAL) {
 		curproc->proc_state = FINISHED;
+
+		// Broadcast its completion
+		lock_acquire(curproc->wait_lock);
+		cv_broadcast(curproc->wait_signal, curproc->wait_lock);
+		lock_release(curproc->wait_lock);
+
+		// Go to sleep until its parent is finished or its parent is destroyed
 		lock_acquire(curproc->exit_lock);
 		cv_wait(curproc->exit_signal, curproc->exit_lock);
 		lock_release(curproc->exit_lock);
