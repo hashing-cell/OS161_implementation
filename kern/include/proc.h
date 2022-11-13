@@ -40,6 +40,7 @@
 #include <thread.h> /* required for struct threadarray */
 #include <filetable.h>
 #include <array.h>
+#include <kern/wait.h>
 
 struct addrspace;
 struct vnode;
@@ -80,6 +81,10 @@ struct proc {
 	// For waitpid
 	struct lock *wait_lock;
 	struct cv *wait_signal;
+
+	// For exit
+	struct lock *exit_lock;
+	struct cv *exit_signal;
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
@@ -95,7 +100,7 @@ struct proc *proc_create_runprogram(const char *name);
 int proc_create_sysfork(struct proc **p_new_forked_proc);
 
 /* Exit current process */
-
+void proc_exit(int exit_code, int w_origin);
 
 /* Destroy a process. */
 void proc_destroy(struct proc *proc);

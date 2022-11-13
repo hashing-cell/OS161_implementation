@@ -49,6 +49,7 @@
 #include <addrspace.h>
 #include <vnode.h>
 #include <proctable.h>
+#include <kern/wait.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -115,7 +116,7 @@ proc_create(const char *name)
 	}
 	
 	proc->wait_signal = cv_create("waitpid cv");
-	if (proc->wait_lock == NULL) {
+	if (proc->wait_signal == NULL) {
 		lock_destroy(proc->wait_lock);
 		array_destroy(proc->children);
 		filetable_destroy(proc->p_ft);
@@ -124,6 +125,29 @@ proc_create(const char *name)
 		return NULL;
 	}
 	
+
+	proc->exit_lock = lock_create("exit lock");
+	if (proc->exit_lock == NULL) {
+		cv_destroy(proc->wait_signal);
+		lock_destroy(proc->wait_lock);
+		array_destroy(proc->children);
+		filetable_destroy(proc->p_ft);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	
+	proc->exit_signal = cv_create("exit cv");
+	if (proc->exit_signal == NULL) {
+		lock_destroy(proc->exit_lock);
+		cv_destroy(proc->wait_signal);
+		lock_destroy(proc->wait_lock);
+		array_destroy(proc->children);
+		filetable_destroy(proc->p_ft);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
 
 	return proc;
 }
@@ -433,4 +457,50 @@ proc_setas(struct addrspace *newas)
 	proc->p_addrspace = newas;
 	spinlock_release(&proc->p_lock);
 	return oldas;
+}
+
+
+void
+proc_exit(int exit_code, int w_origin) {
+	switch (w_origin) {
+		case __WEXITED:
+			curproc->exit_code = _MKWAIT_EXIT(exit_code);
+			break;
+		case __WSIGNALED:
+			curproc->exit_code = _MKWAIT_SIG(exit_code);
+			break;
+		case __WCORED:
+			curproc->exit_code = _MKWAIT_CORE(exit_code);
+			break;
+		default:
+			curproc->exit_code = _MKWAIT_STOP(exit_code);
+			break;
+	}
+	
+	cv_broadcast(curproc->wait_signal, curproc->wait_lock);
+
+	// We check their children
+	// - we wake up all finished children (finished children will destroy themselves after wake)
+	// - otherwise we will orphan children that are running
+	int num_child_procs = array_num(curproc->children);
+	for (int i = 0; i < num_child_procs; i++) {
+		struct proc *child_proc = array_get(curproc->children, i);
+		if (child_proc->proc_state == FINISHED) {
+			cv_broadcast(child_proc->exit_signal, child_proc->exit_lock);
+		} else if (child_proc->proc_state == NORMAL) {
+			child_proc->proc_state = ORPHAN;
+		}
+	}
+
+
+	// If we still have a parent, we go to the finished state and sleep until the process' parent signals to wake up, where it will then destroy itself
+	// Otherwise we destroy this process immediately
+	if (curproc->proc_state == NORMAL) {
+		curproc->proc_state = FINISHED;
+		cv_wait(curproc->exit_signal, curproc->exit_lock);
+	}
+
+	proc_destroy(curproc);
+
+	thread_exit();
 }

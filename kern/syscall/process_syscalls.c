@@ -11,6 +11,7 @@
 #include <thread.h>
 #include <proctable.h>
 #include <copyinout.h>
+#include <kern/wait.h>
 
 int
 sys_getpid(pid_t *retval)
@@ -88,22 +89,28 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
         return EINVAL;
     }
 
-    struct proc *wait_proc = proctable_get_proc(pid);
-    if (pid < PID_MIN || pid > PID_MAX || wait_proc == NULL) {
+    struct proc *child_proc = proctable_get_proc(pid);
+    if (pid < PID_MIN || pid > PID_MAX || child_proc == NULL) {
         return ESRCH;
     }
 
     // Check if the PID of the process to be waited on is the parent of the current process
-    if (wait_proc->parent_pid != curproc->pid) {
+    if (child_proc->parent_pid != curproc->pid) {
         return ECHILD;
     }
 
-    if (wait_proc->proc_state != FINISHED) {
-        cv_wait(wait_proc->wait_signal, wait_proc->wait_lock);
+    // We sleep and hold here if the child process is not finished
+    int proc_state = child_proc->proc_state;
+    while (proc_state != FINISHED) {
+        cv_wait(child_proc->wait_signal, child_proc->wait_lock);
+        proc_state = child_proc->proc_state;
     }
 
+    // After collecting the child's exit code, we can allow it to terminate
+    cv_broadcast(child_proc->exit_signal, child_proc->exit_lock);
+
     if (status != NULL) {
-        int err = copyout(&wait_proc->exit_code, status, sizeof(int));
+        int err = copyout(&child_proc->exit_code, status, sizeof(int));
         if (err) {
             return err;
         }
@@ -116,7 +123,7 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
 int
 sys__exit(int exitcode)
 {
-    (void) exitcode;
-    //stuff
+    proc_exit(exitcode, __WEXITED);
+    panic("Should not return");
     return 0;
 }
