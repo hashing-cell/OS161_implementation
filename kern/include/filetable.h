@@ -13,6 +13,7 @@ struct ft_file {
     struct vnode *vn;
     int flags;
     off_t offset;
+    int refcount;
     struct lock* lk_file; 
 };
 
@@ -31,6 +32,8 @@ void ft_file_destroy(struct ft_file*);
 void filetable_destroy(struct filetable* ft);
 /* Add file object to file_entries of filetable */
 int add_ft_file(struct filetable*, struct ft_file*, int*);
+/* Decrement reference count of a file, Use this instead of destroying it instead */
+void decre_ft_file(struct ft_file*);
 /* Initialize stdin, stdout, and stderr in filetable */
 void init_stdio(struct filetable*);
 

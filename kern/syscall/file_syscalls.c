@@ -301,12 +301,8 @@ sys_close(int fd, int *retval)
         lock_release(ft->lk_ft);
         return EBADF;
     }
-    //lock file before closing
-    lock_acquire(f->lk_file);
-    vfs_close(f->vn);
-    lock_release(f->lk_file);
 
-    ft_file_destroy(f);
+    decre_ft_file(f);
     ft->file_entries[fd] = NULL;  //remove closed file from filetable's file entries
     ft->num_opened--;  //decrement num_opened now that 1 file has been closed
     lock_release(ft->lk_ft);
@@ -373,7 +369,7 @@ sys_dup2(int oldfd, int newfd, int *retval)
     
     if (new_ft_file != NULL) {
         // already opened file.  Close it silently
-        ft_file_destroy(new_ft_file);
+        decre_ft_file(new_ft_file);
         ft->num_opened--;
         ft->file_entries[newfd] = NULL;
     }
