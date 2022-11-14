@@ -80,13 +80,7 @@ int
 sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval)
 {
     struct iovec iov;
-    struct uio ku;
-    char *k_buf;
-
-    if (buf == NULL) {
-        *retval = -1;
-        return EFAULT;
-    }
+    struct uio u;
 
     // Check if fd is a valid one
     if (fd < 0 || fd >= OPEN_MAX) {
@@ -112,40 +106,30 @@ sys_read(int fd, userptr_t buf, size_t buflen, ssize_t *retval)
         return EBADF;
     }
 
-    // Allocate memory and create uio block and read from vnode associated with file
-    k_buf = kmalloc(buflen);
-    if (!k_buf) {
-        lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-        *retval = -1;
-        return ENOMEM;
-    }
-    uio_kinit(&iov, &ku, k_buf, buflen, curproc->p_ft->file_entries[fd]->offset, UIO_READ);
+    // Create uio block and read from vnode associated with file
+    iov.iov_ubase = buf;
+    iov.iov_len = buflen;
+    u.uio_iov = &iov;
+    u.uio_iovcnt = 1;
+    u.uio_offset = curproc->p_ft->file_entries[fd]->offset;
+    u.uio_resid = buflen;
+    u.uio_segflg = UIO_USERSPACE;
+    u.uio_rw = UIO_READ;
+    u.uio_space = curproc->p_addrspace;
     
     // Do the actual vnode read
-    int result = VOP_READ(curproc->p_ft->file_entries[fd]->vn, &ku);
+    int result = VOP_READ(curproc->p_ft->file_entries[fd]->vn, &u);
     if (result) {
         lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-        kfree(k_buf);
         *retval = -1;
         return result;
     }
 
     // Check how much bytes have been actually written, and advance seek position
-    size_t nbytes_read = buflen - ku.uio_resid;
+    size_t nbytes_read = buflen - u.uio_resid;
     curproc->p_ft->file_entries[fd]->offset += nbytes_read;
 
-    // Copyout to user provided buffer
-    if (nbytes_read != 0) {
-        if (copyout(k_buf, buf, nbytes_read)) {
-            lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-            kfree(k_buf);
-            *retval = -1;
-            return EFAULT;
-        }
-    }
-
     lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-    kfree(k_buf);
     *retval = nbytes_read;
 
     return 0;
@@ -158,14 +142,7 @@ int
 sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
 {
     struct iovec iov;
-    struct uio ku;
-    char *k_buf;
-
-    // Check if user buffer is null
-    if (buf == NULL) {
-        *retval = -1;
-        return EFAULT;
-    }
+    struct uio u;
 
     // Check if fd is a valid one
     if (fd < 0 || fd >= OPEN_MAX) {
@@ -182,45 +159,39 @@ sys_write(int fd, const userptr_t buf, size_t nbytes, ssize_t *retval)
     }
     lock_release(curproc->p_ft->lk_ft);
 
-    // Copyin data from userspace to a buffer
-    k_buf = kmalloc(nbytes);
-    if (!k_buf) {
-        *retval = -1;
-        return ENOMEM;
-    }
-    if (copyin(buf, k_buf, nbytes)) {
-        kfree(k_buf);
-        *retval = -1;
-        return EFAULT;
-    }
-
     // Check if file is opened for writing
     lock_acquire(curproc->p_ft->file_entries[fd]->lk_file);
     int flags_masked = curproc->p_ft->file_entries[fd]->flags & 0x03; //bitmask for the last 2 bits
     if (flags_masked == O_RDONLY) {
         lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-        kfree(k_buf);
         *retval = -1;
         return EBADF;
     }
 
     // Create uio block and write to vnode
-    uio_kinit(&iov, &ku, k_buf, nbytes, curproc->p_ft->file_entries[fd]->offset, UIO_WRITE);
+    iov.iov_ubase = (userptr_t)buf;
+    iov.iov_len = nbytes;
+    u.uio_iov = &iov;
+    u.uio_iovcnt = 1;
+    u.uio_offset = curproc->p_ft->file_entries[fd]->offset;
+    u.uio_resid = nbytes;
+    u.uio_segflg = UIO_USERSPACE;
+    u.uio_rw = UIO_WRITE;
+    u.uio_space = curproc->p_addrspace;
     
-    int result = VOP_WRITE(curproc->p_ft->file_entries[fd]->vn, &ku);
+    int result = VOP_WRITE(curproc->p_ft->file_entries[fd]->vn, &u);
     if (result) {
         lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-        kfree(k_buf);
         *retval = -1;
         return result;
     }
 
     // Check how much bytes have been actually written, and advance seek position
-    size_t nbytes_written = nbytes - ku.uio_resid;
+    size_t nbytes_written = nbytes - u.uio_resid;
     curproc->p_ft->file_entries[fd]->offset += nbytes_written;
 
     lock_release(curproc->p_ft->file_entries[fd]->lk_file);
-    kfree(k_buf);
+
     *retval = nbytes_written;
     
     return 0;
