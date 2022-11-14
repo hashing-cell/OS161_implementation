@@ -77,83 +77,177 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 }
 
 static
-int get_user_strlen(char* str, size_t* len) {
-    size_t count = 0;
-    const char* curr_char = (const char*) str;
-    *len = 0;
-    size_t maxlen = 0;
+int get_user_strlen(const char *str, int *len) 
+{
+    char buf[64];
+    size_t maxlen = 64;
+    size_t read;
+    int err;
+    const char *p_instr = str;
+    int strlen = 0;
 
-    if ((vaddr_t) str >= USERSPACETOP) {
-		/* region is within the kernel */
-		return EFAULT;
-	}
-
-    maxlen = USERSPACETOP - (vaddr_t) str;
-
-    while(*curr_char) {
-        if((vaddr_t) curr_char < (vaddr_t) str) {
-            return EFAULT;
+    do {    
+        err = copyinstr((const_userptr_t) p_instr, buf, maxlen, &read);
+        if (err == ENAMETOOLONG) 
+            read = maxlen;
+        else if (err) {
+            return err;
         }
-        if (count >= maxlen) {
-            /* region within the kernel */
-            return EFAULT;
-        }
-        count++;
-        curr_char++;
-    }
-    *len = count;
+
+        p_instr += read;
+        strlen += read;
+    } 
+    while ( (err == ENAMETOOLONG) || buf[read - 1] !='\0');
+    
+    *len = strlen;  // strlen includes the NULL at the end
     return 0;
 }
 
 static
-int copy2kernel(char **argv, size_t *argc, char **kbuffer, size_t *bufsize) {
-    size_t kbufsize = 0;
-    size_t idx = 0;  //curr 
-    char* kbuf;
-    size_t len = 0;
+int get_user_argv_addr(const_userptr_t argv, vaddr_t *addr) {
+    char buf[8];  //only copying in 4 but have 8 just in case of overflow
     int err;
     
-    //calc kbufsize
-    while(argv[idx] != NULL) {
-        err = get_user_strlen(argv[idx], &len);
-        if(err) {
-            return -1;
-        }
-        kbufsize += len + (4 - (len % 4));
+    if (argv == NULL) {
+        return EFAULT;
+    }
+    
+    err = copyin(argv, buf, 4);
+    if (err) {
+        return err;
+    }
+    
+    *addr = *((vaddr_t *) buf);
+    return 0;
+}
 
-        if(kbufsize >= ARG_MAX) {
+static
+int compute_argument_buffer(char **argv, size_t *argc, size_t *bufsize)
+{
+    char *p_argv = (char *) argv;
+    char *p_arg;
+    vaddr_t arg_addr;
+    int err, strlen;
+    int bufsz = 0;
+    int arg_count = 0;
+    
+    *argc = 0;
+    *bufsize = 0;
+    
+    do {
+        err = get_user_argv_addr((const_userptr_t) p_argv, &arg_addr);
+        if (err) {
+            return err;
+        }
+        
+        if (arg_addr == 0) {
+            break;
+        }
+        
+        p_arg = (char *) arg_addr;
+        p_argv += 4;
+        
+        err = get_user_strlen(p_arg, &strlen);
+        if (err) {
+            return err;
+        }
+        
+//        kprintf("strlen %d\n", strlen);
+        
+        bufsz += strlen;    //strlen already includes the NULL terminator
+        if (strlen % 4) {
+            bufsz += (4 - (strlen % 4));  //calc padding for alignment
+        }
+
+        if (bufsz >= ARG_MAX) {
             return E2BIG;
         }
-        idx++;
-    }
+            
+        arg_count++;
+     }
+     while (1);
+     
+    //add buffer for (arg_count + 1) pointers
+    //extra pointer is the NULL pointer at the end of argv
+    bufsz += (int) (sizeof(char *) * (arg_count+1));
 
-    kbufsize += (idx+1) * (size_t)sizeof(char*); //for storing offset of karg and null before arg values
-    kbuf = kmalloc(kbufsize);
-
-    bzero(kbuf, kbufsize);
-
-    size_t offset = (idx+1) * (size_t)sizeof(char*);
-    size_t arg_len = 0;
-    size_t arg_padded_len = 0;
-    idx = 0;
-    unsigned int* kargv = (unsigned int*) kbuf;
-    while(argv[idx]) {
-        arg_len = strlen(argv[idx]);
-        arg_padded_len = arg_len+(4 - (arg_len % 4));
-        copyin((const_userptr_t)argv[idx], kbuf+offset, arg_padded_len);
-        
-        //fill kargv[idx] addresses
-        *kargv = offset;
-        kargv++;
-       
-        idx++;
-        offset += arg_padded_len;
-    }
-    *bufsize = kbufsize;
-    *kbuffer = kbuf;
-    *argc = idx;
+    *argc = arg_count;
+    *bufsize = bufsz;
     return 0;
+}
 
+// copy the input args from userspace to kernel buffer
+static
+int copyin_arguments(char **in_argv, int argc, int bufsize, char *outbuf)
+{
+    char *p_inargv = (char *) in_argv;
+    char *p_outbuf = outbuf;
+    char *p_inargument;
+    char *p_outargument;
+    vaddr_t arg_addr;
+    int err, arg_len, total_arg_len;
+    int arg_offset;
+    
+    // fill outbuf with zeros
+    bzero(outbuf, bufsize);
+        
+    // p_outbuf points to the base address of outbuf, which stores the address of arguments
+    p_outbuf = outbuf;
+    
+    // arg_start is the offset from the outbuf
+    arg_offset = (argc + 1) * sizeof(vaddr_t);
+    
+    // p_outargument points to the first argument address within the output buffer
+    p_outargument = outbuf + arg_offset;  
+    
+    // accumulated argument length
+    total_arg_len = 0;
+    
+    
+    for (int i=0; i<argc; i++) {
+        err = get_user_argv_addr((const_userptr_t) p_inargv, &arg_addr);
+        if (err) {
+            return err;
+        }
+        
+        // advance to the next argument address
+        p_inargv += sizeof(vaddr_t);    // = 4
+        
+        // point to the input argument string
+        p_inargument = (char *) arg_addr;
+        err = get_user_strlen(p_inargument, &arg_len);
+        if (err) {
+            return err;
+        }
+        
+        // kprintf("p_inargument %s\n", p_inargument);
+        // write the argument
+        // arg_len already includes the NULL terminator so copyin and copyinstr are the same
+        err = copyin((const_userptr_t) p_inargument, p_outargument, arg_len);
+        if (err) {
+            return err;
+        }
+        
+        // write the argument address
+        *((vaddr_t *) p_outbuf) = (vaddr_t) (arg_offset + total_arg_len);
+        
+        // advance to location for next argument address
+        p_outbuf += sizeof(vaddr_t);    // sizeof(vaddr_t) = 4
+
+        // add padding
+        if (arg_len % 4) {
+            arg_len += (4 - arg_len % 4);
+        }
+        
+        // update accumulated argument length
+        total_arg_len += arg_len;
+//        kprintf("total_arg_len %d\n", total_arg_len);
+        
+        // advance to next output argument location, account for padding
+        p_outargument += arg_len;
+    }
+    
+    return 0;
 }
 
 int
@@ -192,12 +286,25 @@ sys_execv(const char* program, char** args, pid_t* retval)
     }
 
     //copy args from userspace to kernel
-    err = copy2kernel(args, &argc, &kbuf, &kbufsize);
+    err = compute_argument_buffer(args, &argc, &kbufsize);
     if (err) {
         kfree(progname);
         return err;
     }
     
+    kbuf = kmalloc(kbufsize);
+    if(kbuf == NULL) {
+        kfree(progname);
+        return ENOMEM;
+    }
+
+    err = copyin_arguments(args, argc, kbufsize, kbuf);
+    if (err) {
+        kfree(progname);
+        kfree(kbuf);
+        return err;
+    }
+
     struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
@@ -242,7 +349,7 @@ sys_execv(const char* program, char** args, pid_t* retval)
 
     stackptr -= kbufsize;
 
-    /* Set kargv[i] to correct addr in stack. Starting w kargv[0] = stackptr */
+    /* Set kargv[i] to correct addr in stack. Starting w kargv[0] = stackptr+offset of 1st arg */
     unsigned int* kbuf_idx = (unsigned int *)kbuf;
     for(unsigned int i = 0; i < argc; i++) {
         *kbuf_idx += stackptr;
