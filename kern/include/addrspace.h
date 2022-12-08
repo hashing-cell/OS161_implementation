@@ -48,6 +48,31 @@ struct vnode;
  * You write this.
  */
 
+#define AS_EXECUTABLE           0x1
+#define AS_WRITEABLE            0x2
+#define AS_READABLE             0x4
+
+// for replacement algorithm
+#define PT_USED_MASK        0x800
+// 1 = in RAM, 0 = in swap
+#define PT_VALID_MASK       0x400
+// 1 = changed after in RAM
+#define PT_DIRTY_MASK       0x200
+// 1 = in RAM, 0 = in swap
+#define PT_PRESENT_MASK     0x100
+
+ 
+typedef __u32   pagedir_t;
+typedef __u32   pagetable_t;
+
+struct pagedir {
+    pagedir_t pd_entries[PAGE_SIZE / 4];
+};
+
+struct pagetable {
+    pagetable_t pt_entries[PAGE_SIZE / 4];
+};
+
 struct addrspace {
 #if OPT_DUMBVM
         vaddr_t as_vbase1;
@@ -59,6 +84,26 @@ struct addrspace {
         paddr_t as_stackpbase;
 #else
         /* Put stuff here for your VM system */
+        vaddr_t as_code_base;
+        vaddr_t as_code_top;
+        __u32 as_code_permission;
+        vaddr_t as_data_base;
+        vaddr_t as_data_top;
+        __u32 as_data_permission;
+        vaddr_t as_stack_base;
+        vaddr_t as_stack_top;
+        __u32 as_stack_permission;
+        vaddr_t as_heap_base;
+        vaddr_t as_heap_top;
+        __u32 as_heap_permission;
+        
+        __u32 as_kpages;
+        __u32 as_vpages;
+        
+        __u32 as_kpagesreleased;
+        __u32 as_vpagesreleased;
+
+        pagedir_t as_pagedir[PAGE_SIZE / 4];
 #endif
 };
 
@@ -118,6 +163,10 @@ int               as_prepare_load(struct addrspace *as);
 int               as_complete_load(struct addrspace *as);
 int               as_define_stack(struct addrspace *as, vaddr_t *initstackptr);
 
+int               as_get_pt_entry(struct addrspace* as, vaddr_t addr, pagetable_t *pt_entry); 
+int               as_set_pt_entry(struct addrspace *as, vaddr_t addr, pagetable_t pt_entry);
+bool              as_is_valid_address(struct addrspace* as, vaddr_t addr);
+unsigned          as_get_permission(struct addrspace *as, vaddr_t addr);
 
 /*
  * Functions in loadelf.c

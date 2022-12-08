@@ -32,6 +32,31 @@
 #include <lib.h>
 #include <addrspace.h>
 #include <vm.h>
+#include <proc.h>
+
+// number of entries in a pagetable, PAGE_SIZE / 4
+#define NUM_PTE             1024
+
+// number of bits used to represent a page frame number
+#define PFN_BITS            10
+
+// number of bits used to represent page offset
+#define PAGE_OFFSET_BITS    12
+
+// page frame number mask
+#define PFN_MASK            0x3FF
+
+
+
+static
+struct pagetable*
+create_pagetable()
+{
+    struct pagetable *new_pt = kmalloc(PAGE_SIZE);
+    if (new_pt) 
+        bzero(new_pt, PAGE_SIZE);
+    return new_pt;
+}
 
 /*
  * Note! If OPT_DUMBVM is set, as is the case until you start the VM
@@ -48,10 +73,22 @@ as_create(void)
 	if (as == NULL) {
 		return NULL;
 	}
+	
+	bzero(as, sizeof(struct addrspace));
 
 	/*
 	 * Initialize as needed.
 	 */
+    as->as_stack_top = USERSTACK;
+	as->as_stack_base = USERSTACK - STACK_SIZE;
+	
+	as->as_stack_permission = AS_READABLE | AS_WRITEABLE;
+	as->as_heap_permission = AS_READABLE| AS_WRITEABLE;
+	as->as_code_permission = AS_READABLE | AS_WRITEABLE;
+	as->as_data_permission = AS_READABLE | AS_WRITEABLE;
+	
+	as->as_kpages = as->as_vpages = 0;
+	as->as_kpagesreleased = as->as_vpagesreleased = 0;
 
 	return as;
 }
@@ -65,12 +102,39 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	if (newas==NULL) {
 		return ENOMEM;
 	}
+	
+	newas->as_code_base = old->as_code_base;
+	newas->as_code_top = old->as_code_top;	
+	newas->as_data_base = old->as_data_base;
+	newas->as_data_top = old->as_data_top;	
+	newas->as_stack_base = old->as_stack_base;
+	newas->as_stack_top = old->as_stack_top;	
+	newas->as_heap_base = old->as_heap_base;
+	newas->as_heap_top = old->as_heap_top;	
+	
+    int i, j;
+    struct pagetable* oldpt;
+    struct pagetable* newpt;
 
-	/*
-	 * Write this.
-	 */
-
-	(void)old;
+    for (i=0; i<NUM_PTE; i++) {
+        oldpt = (struct pagetable *) (old->as_pagedir[i] & PAGE_FRAME);
+        if (oldpt != NULL) {
+            newpt = create_pagetable();
+            if (newpt == NULL) {
+                as_destroy(newas);
+                return ENOMEM;
+            }
+            // add the new table to new page directory
+            newas->as_pagedir[i] = (pagedir_t) ((vaddr_t) newpt & PAGE_FRAME);
+            
+            // iterate through the pagetable and populate entries
+            for (j=0; j<NUM_PTE; j++) {
+                if (oldpt->pt_entries[j] != 0) {
+                    newpt->pt_entries[j] = oldpt->pt_entries[j];
+                }
+            }
+        }
+    }
 
 	*ret = newas;
 	return 0;
@@ -79,10 +143,24 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 void
 as_destroy(struct addrspace *as)
 {
-	/*
-	 * Clean up as needed.
-	 */
-
+    struct pagetable *pt;
+    paddr_t ppage;
+    int i, j;
+    for (i=0; i<PFN_BITS; i++) {
+        pt = (struct pagetable *) (as->as_pagedir[i] & PAGE_FRAME);  
+        as->as_pagedir[i] = 0;          
+        if (pt != NULL) {
+            for (j=0; j<PFN_BITS; j++) {
+                ppage = (paddr_t) (pt->pt_entries[j] & PAGE_FRAME);
+                if (ppage > 0) {
+                    // we store in paddr_t, but free_kpages is expecting vaddr_t
+                    free_kpages(PADDR_TO_KVADDR(ppage));
+                }
+            }
+            
+            kfree(pt);
+        }
+    }
 	kfree(as);
 }
 
@@ -91,7 +169,7 @@ as_activate(void)
 {
 	struct addrspace *as;
 
-	as = curproc_getas();
+	as = proc_getas();
 	if (as == NULL) {
 		/*
 		 * Kernel thread without an address space; leave the
@@ -100,9 +178,7 @@ as_activate(void)
 		return;
 	}
 
-	/*
-	 * Write this.
-	 */
+    vm_tlbinvalidate();
 }
 
 void
@@ -129,48 +205,68 @@ int
 as_define_region(struct addrspace *as, vaddr_t vaddr, size_t sz,
 		 int readable, int writeable, int executable)
 {
-	/*
-	 * Write this.
-	 */
+    size_t npages;
+    __u32 permission = (readable | writeable | executable) << 8;
 
-	(void)as;
-	(void)vaddr;
-	(void)sz;
-	(void)readable;
-	(void)writeable;
-	(void)executable;
-	return EUNIMP;
+	/* Align the region. First, the base... */
+	sz += vaddr & ~(vaddr_t)PAGE_FRAME;
+	vaddr &= PAGE_FRAME;
+
+	/* ...and now the length. */
+	sz = (sz + PAGE_SIZE - 1) & PAGE_FRAME;
+
+	npages = sz / PAGE_SIZE;
+    
+	if (as->as_code_base == 0) {
+	    as->as_code_base = vaddr;
+	    as->as_code_top = vaddr + npages * PAGE_SIZE;
+	    as->as_code_permission |= permission; 
+
+	    as->as_heap_base = as->as_heap_top = as->as_code_top;
+	}
+	else {
+	    if (vaddr >= as->as_code_top) {
+	        as->as_data_base = vaddr;
+	        as->as_data_top = vaddr + npages * PAGE_SIZE;
+	        as->as_data_permission |= permission;
+	        as->as_heap_base = as->as_heap_top = as->as_data_top;
+	    }
+	    else {
+	        // the data segment was loaded before text segment
+	        as->as_data_base = as->as_code_base;
+	        as->as_data_top = as->as_code_top;
+	        as->as_data_permission = as->as_code_permission;
+	        
+	        as->as_code_base = vaddr;
+	        as->as_code_top = vaddr + npages * PAGE_SIZE;
+	        as->as_code_permission |= permission;
+	        
+	        as->as_heap_base = as->as_heap_top = as->as_data_top;
+	    }
+	}
+	return 0;
 }
 
 int
 as_prepare_load(struct addrspace *as)
 {
-	/*
-	 * Write this.
-	 */
-
-	(void)as;
+ 	(void)as;
+ 	
 	return 0;
 }
 
 int
 as_complete_load(struct addrspace *as)
 {
-	/*
-	 * Write this.
-	 */
-
-	(void)as;
+    as->as_code_permission >>= 8;
+    as->as_data_permission >>= 8;
 	return 0;
 }
 
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	/*
-	 * Write this.
-	 */
-
+    // no implementation
 	(void)as;
 
 	/* Initial user-level stack pointer */
@@ -179,3 +275,92 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	return 0;
 }
 
+int
+as_get_pt_entry(struct addrspace* as, vaddr_t addr, pagetable_t *pt_entry) 
+{
+    unsigned pd_idx = (addr >> (PFN_BITS + PAGE_OFFSET_BITS));
+    unsigned pt_idx = ((addr >> PAGE_OFFSET_BITS) & PFN_MASK);
+    
+    pagedir_t pde = as->as_pagedir[pd_idx];
+    vaddr_t ptaddr; 
+    
+    if (pde == 0) {
+        ptaddr = (vaddr_t) create_pagetable();
+        if (ptaddr == 0) {
+            return ENOMEM;             
+        }
+        // add the new pagetable to page directory
+        // upper 20 bits for pagetable address
+        as->as_pagedir[pd_idx] = (pagedir_t) (ptaddr & PAGE_FRAME);
+    }
+    else {
+        ptaddr = (pde & PAGE_FRAME);
+    }
+    
+    *pt_entry = ((struct pagetable *) ptaddr)->pt_entries[pt_idx];
+    return 0;
+}
+
+int
+as_set_pt_entry(struct addrspace *as, vaddr_t addr, pagetable_t pt_entry)
+{
+    unsigned pd_idx = addr >> (PAGE_OFFSET_BITS + PFN_BITS);
+    unsigned pt_idx = (addr >> PAGE_OFFSET_BITS) & PFN_MASK;
+
+    pagedir_t pde = as->as_pagedir[pd_idx];
+    struct pagetable *pt = (struct pagetable*) (pde & PAGE_FRAME);
+    if (pt == NULL) {
+        pt = create_pagetable();
+    }
+    
+    KASSERT(pt != NULL);
+    pt->pt_entries[pt_idx] = pt_entry;
+
+    return 0;
+}
+
+bool
+as_is_valid_address(struct addrspace* as, vaddr_t addr)
+{
+    KASSERT(as != NULL);
+    if (addr >= as->as_code_base && addr < as->as_code_top) {
+        return true;
+    }
+    
+    if (addr >= as->as_data_base && addr < as->as_data_top) {
+        return true;
+    }
+    
+    if (addr >= as->as_stack_base && addr < as->as_stack_top) {
+        return true;
+    }
+    
+    if (addr >= as->as_heap_base && addr < as->as_heap_top) {
+        return true;
+    }
+    
+    return false;
+}
+
+unsigned
+as_get_permission(struct addrspace *as, vaddr_t addr)
+{
+    KASSERT(as != NULL);
+    if (addr >= as->as_code_base && addr < as->as_code_top) {
+        return as->as_code_permission;
+    }
+    
+    if (addr >= as->as_data_base && addr < as->as_data_top) {
+        return as->as_data_permission;
+    }
+    
+    if (addr >= as->as_stack_base && addr < as->as_stack_top) {
+        return as->as_stack_permission;
+    }
+    
+    if (addr >= as->as_heap_base && addr >= as->as_heap_top) {
+        return as->as_heap_permission;
+    }
+    
+    return 0;
+}
