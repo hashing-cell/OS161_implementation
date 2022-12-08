@@ -27,13 +27,19 @@ void
 begin_forked_process(void *p, unsigned long arg)
 {
     (void) arg;
+    // Function that is begin from a newly created thread to begin the child process
 
+    // We need to place the trapframe on stack memory
     struct trapframe tf;
     memcpy(&tf, p, sizeof(struct trapframe));
     tf.tf_v0 = 0;
     tf.tf_a3 = 0;
     tf.tf_epc += 4;
+
+    // Free the trapframe that was allocated on the heap
     kfree(p);
+
+    // Activate addressspace
     as_activate();
     
     mips_usermode(&tf);
@@ -46,11 +52,13 @@ sys_fork(struct trapframe *tf, pid_t *retval)
     *retval = -1;
     struct proc *child_proc;
 
+    // Create the child process struct here
     err = proc_create_sysfork(&child_proc);
     if (err) {
         return err;
     }
 
+    // Copy the addressspace to the new process struct for the child
     struct addrspace *parent_as = proc_getas();
     err = as_copy(parent_as, &child_proc->p_addrspace);
 	if (err) {
@@ -58,6 +66,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
 		return err;
 	}
 
+    // Copy the trapframe to the heap
     struct trapframe *child_tf = kmalloc(sizeof(struct trapframe));
     if (child_tf == NULL) {
         proc_destroy(child_proc);
@@ -65,6 +74,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
     }
     memcpy(child_tf, tf, sizeof(struct trapframe));
 
+    // Begin the forked process, passing a pointer to the copy of the trapframe on the heap
     err = thread_fork("child process", child_proc, begin_forked_process, (void *) child_tf, 0);
     if (err) {
         proc_destroy(child_proc);
@@ -72,6 +82,7 @@ sys_fork(struct trapframe *tf, pid_t *retval)
         return err;
     }
 
+    // Successful, return the child PID
     *retval = child_proc->pid;
     return 0;
 }
@@ -375,6 +386,7 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
         return EINVAL;
     }
 
+    // Get the process struct associated with the given PID. The process must exist
     struct proc *child_proc = proctable_get_proc(pid);
     if (pid < PID_MIN || pid > PID_MAX || child_proc == NULL) {
         return ESRCH;
@@ -399,6 +411,7 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
     cv_broadcast(child_proc->exit_signal, child_proc->exit_lock);
     lock_release(child_proc->exit_lock);
 
+    // Copyout exit code to the userspace if the user requested it
     if (status != NULL) {
         int err = copyout(&child_proc->exit_code, status, sizeof(int));
         if (err) {
@@ -406,6 +419,7 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
         }
     }
 
+    // Successful, return pid
     *retval = pid;
     return 0;
 }
@@ -413,6 +427,7 @@ sys_waitpid(pid_t pid, userptr_t status, int options, pid_t* retval)
 int
 sys__exit(int exitcode)
 {
+    // We call the process code to exit, with __WEXITED status
     proc_exit(exitcode, __WEXITED);
     panic("Should not return");
     return 0;
