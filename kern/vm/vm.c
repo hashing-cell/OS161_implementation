@@ -149,7 +149,6 @@ acquire_pages (unsigned npages)
         if (start >= last_page) {
             // we don't support wrap around:
             // continous pages don't wrap around 
-            kprintf("WRAP AROUND\n");
             start = first_page;
             nfree = 0;
         }
@@ -227,7 +226,8 @@ void
 free_kpages (vaddr_t addr)
 {
     unsigned entry_idx = (KVADDR_TO_PADDR(addr) & PAGE_FRAME) >> PAGE_OFFSET_BITS;
-    KASSERT(entry_idx >= first_page && entry_idx < last_page);
+    // KASSERT(entry_idx >= first_page && entry_idx < last_page);
+    KASSERT(entry_idx < last_page);
     
 //    lock_acquire(cm_lock);
     bool acquired = spinlock_do_i_hold(&coremap_lock);

@@ -55,7 +55,7 @@ int sys_sbrk(intptr_t amount, int32_t *retval)
         return err;
     }
     
-    kprintf("sbrk pages %d, heap %d, nfree %d\n", (int) amount, heap_top, nfreepages);
+//    kprintf("sbrk pages %d, heap %d, nfree %d\n", (int) amount, heap_top, nfreepages);
     // return the old heap top
     *retval = (int32_t) heap_top;
     return 0;
