@@ -37,6 +37,7 @@
 
 #include <vm.h>
 #include "opt-dumbvm.h"
+#include <spinlock.h>
 
 struct vnode;
 
@@ -104,6 +105,8 @@ struct addrspace {
         __u32 as_vpagesreleased;
 
         pagedir_t as_pagedir[PAGE_SIZE / 4];
+        int as_refcount;
+        struct spinlock as_lock;
 #endif
 };
 

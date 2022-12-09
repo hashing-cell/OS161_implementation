@@ -363,7 +363,13 @@ proc_create_sysfork(struct proc **p_new_forked_proc)
 	}
 
 	/* VM fields */
-	(*p_new_forked_proc)->p_addrspace = NULL;
+	struct addrspace *as = proc_getas();
+	if (as != NULL) {
+        spinlock_acquire(&as->as_lock);
+        (*p_new_forked_proc)->p_addrspace = as;
+        as->as_refcount++;
+        spinlock_release(&as->as_lock);
+	}
 
 	/* VFS fields */
 

@@ -76,6 +76,8 @@ as_create(void)
 	
 	bzero(as, sizeof(struct addrspace));
 
+    spinlock_init(&as->as_lock);
+
 	/*
 	 * Initialize as needed.
 	 */
@@ -143,14 +145,22 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 void
 as_destroy(struct addrspace *as)
 {
+    spinlock_acquire(&as->as_lock);
+    
+    if (as->as_refcount > 1) {
+        (as->as_refcount)--;
+        spinlock_release(&as->as_lock);
+        return;
+    }
+
     struct pagetable *pt;
     paddr_t ppage;
     int i, j;
-    for (i=0; i<PFN_BITS; i++) {
+    for (i=0; i<NUM_PTE; i++) {
         pt = (struct pagetable *) (as->as_pagedir[i] & PAGE_FRAME);  
         as->as_pagedir[i] = 0;          
         if (pt != NULL) {
-            for (j=0; j<PFN_BITS; j++) {
+            for (j=0; j<NUM_PTE; j++) {
                 ppage = (paddr_t) (pt->pt_entries[j] & PAGE_FRAME);
                 if (ppage > 0) {
                     // we store in paddr_t, but free_kpages is expecting vaddr_t
@@ -161,6 +171,10 @@ as_destroy(struct addrspace *as)
             kfree(pt);
         }
     }
+
+    spinlock_release(&as->as_lock);
+    spinlock_cleanup(&as->as_lock);
+
 	kfree(as);
 }
 
