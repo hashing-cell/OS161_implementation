@@ -32,7 +32,9 @@
 #include <lib.h>
 #include <addrspace.h>
 #include <vm.h>
+#include <current.h>
 #include <proc.h>
+#include <synch.h>
 
 // number of entries in a pagetable, PAGE_SIZE / 4
 #define NUM_PTE             1024
@@ -46,7 +48,8 @@
 // page frame number mask
 #define PFN_MASK            0x3FF
 
-
+extern struct lock *global_lock;
+extern struct spinlock coremap_lock;
 
 static
 struct pagetable*
@@ -104,7 +107,10 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	if (newas==NULL) {
 		return ENOMEM;
 	}
-	
+	bool acquired = spinlock_do_i_hold(&coremap_lock);
+    if (!acquired)
+        spinlock_acquire(&coremap_lock);
+
 	newas->as_code_base = old->as_code_base;
 	newas->as_code_top = old->as_code_top;	
 	newas->as_data_base = old->as_data_base;
@@ -114,7 +120,7 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	newas->as_heap_base = old->as_heap_base;
 	newas->as_heap_top = old->as_heap_top;	
 	
-    int i, j;
+    int i;
     struct pagetable* oldpt;
     struct pagetable* newpt;
 
@@ -129,30 +135,20 @@ as_copy(struct addrspace *old, struct addrspace **ret)
             // add the new table to new page directory
             newas->as_pagedir[i] = (pagedir_t) ((vaddr_t) newpt & PAGE_FRAME);
             
-            // iterate through the pagetable and populate entries
-            for (j=0; j<NUM_PTE; j++) {
-                if (oldpt->pt_entries[j] != 0) {
-                    newpt->pt_entries[j] = oldpt->pt_entries[j];
-                }
-            }
+            // allocate physical pages for the new page table, and copy the memory contents over
+            duplicate_pagetable(oldpt, newpt);
         }
     }
 
 	*ret = newas;
+    if (!acquired)
+        spinlock_release(&coremap_lock);
 	return 0;
 }
 
 void
 as_destroy(struct addrspace *as)
 {
-    spinlock_acquire(&as->as_lock);
-    
-    if (as->as_refcount > 1) {
-        (as->as_refcount)--;
-        spinlock_release(&as->as_lock);
-        return;
-    }
-
     struct pagetable *pt;
     paddr_t ppage;
     int i, j;
@@ -171,9 +167,6 @@ as_destroy(struct addrspace *as)
             kfree(pt);
         }
     }
-
-    spinlock_release(&as->as_lock);
-    spinlock_cleanup(&as->as_lock);
 
 	kfree(as);
 }
@@ -295,12 +288,20 @@ as_get_pt_entry(struct addrspace* as, vaddr_t addr, pagetable_t *pt_entry)
     unsigned pd_idx = (addr >> (PFN_BITS + PAGE_OFFSET_BITS));
     unsigned pt_idx = ((addr >> PAGE_OFFSET_BITS) & PFN_MASK);
     
+    bool acquired = spinlock_do_i_hold(&as->as_lock);
+    if (!acquired) {
+        spinlock_acquire(&as->as_lock);
+    }
+
     pagedir_t pde = as->as_pagedir[pd_idx];
     vaddr_t ptaddr; 
     
     if (pde == 0) {
         ptaddr = (vaddr_t) create_pagetable();
         if (ptaddr == 0) {
+            if (!acquired) {
+                spinlock_release(&as->as_lock);
+            }
             return ENOMEM;             
         }
         // add the new pagetable to page directory
@@ -312,6 +313,9 @@ as_get_pt_entry(struct addrspace* as, vaddr_t addr, pagetable_t *pt_entry)
     }
     
     *pt_entry = ((struct pagetable *) ptaddr)->pt_entries[pt_idx];
+    if (!acquired) {
+        spinlock_release(&as->as_lock);
+    }
     return 0;
 }
 
@@ -320,6 +324,11 @@ as_set_pt_entry(struct addrspace *as, vaddr_t addr, pagetable_t pt_entry)
 {
     unsigned pd_idx = addr >> (PAGE_OFFSET_BITS + PFN_BITS);
     unsigned pt_idx = (addr >> PAGE_OFFSET_BITS) & PFN_MASK;
+
+    bool acquired = spinlock_do_i_hold(&as->as_lock);
+    if (!acquired) {
+        spinlock_acquire(&as->as_lock);
+    }
 
     pagedir_t pde = as->as_pagedir[pd_idx];
     struct pagetable *pt = (struct pagetable*) (pde & PAGE_FRAME);
@@ -330,6 +339,10 @@ as_set_pt_entry(struct addrspace *as, vaddr_t addr, pagetable_t pt_entry)
     KASSERT(pt != NULL);
     pt->pt_entries[pt_idx] = pt_entry;
 
+    if (!acquired) {
+        spinlock_release(&as->as_lock);
+    }
+    
     return 0;
 }
 

@@ -39,9 +39,8 @@
 #include <machine/types.h>
 #include <machine/vm.h>
 
-// upper 20 bits is the physical frame number (PFN) in paddr_t
-typedef __u32       ppagemap_t;
-typedef __u32       swapmap_t;
+struct pagetable;
+typedef uint32_t       swapmap_t;
 
 // max physical RAM = 16MB
 #define RAM_MAX             (16 * 1024 * 1024)
@@ -96,8 +95,8 @@ typedef __u32       swapmap_t;
 #define IS_PPAGE_ALLOC_END(ppage)   (ppage & PP_ALLOC_END_MASK)
 
 struct coremap {
-    ppagemap_t cm_ppmap[NUM_PPAGES];
-    swapmap_t  cm_swapmap[NUM_SW_PAGES];
+//    ppagemap_t cm_ppmap[NUM_PPAGES];
+//    uint32_t    *cm_ppmap;
 };
 
 /* Fault-type arguments to vm_fault() */
@@ -117,6 +116,7 @@ vaddr_t alloc_kpages(unsigned npages);
 void free_kpages(vaddr_t addr);
 int alloc_sbrk_pages(unsigned npages);
 int free_sbrk_pages(unsigned npages);
+int duplicate_pagetable(struct pagetable* from, struct pagetable *to);
 
 /* TLB shootdown handling called from interprocessor_interrupt */
 void vm_tlbshootdown_all(void);

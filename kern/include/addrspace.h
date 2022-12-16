@@ -62,9 +62,10 @@ struct vnode;
 // 1 = in RAM, 0 = in swap
 #define PT_PRESENT_MASK     0x100
 
- 
-typedef __u32   pagedir_t;
-typedef __u32   pagetable_t;
+ // number of entries in a pagetable, PAGE_SIZE / 4
+#define NUM_PTE             1024
+typedef uint32_t   pagedir_t;
+typedef uint32_t   pagetable_t;
 
 struct pagedir {
     pagedir_t pd_entries[PAGE_SIZE / 4];

@@ -16,20 +16,20 @@
 #include <kern/fcntl.h>
 #include <uio.h>
 #include <vnode.h>
-//#include <swap.h>
 
-
-//extern struct swapfile swfile;
 
 // declare a global coremap
 struct coremap coremap;
+uint32_t user_base_addr;
+uint32_t* _coremap;
 
 struct lock *global_lock;
 struct spinlock coremap_lock = SPINLOCK_INITIALIZER;
 struct spinlock tlb_lock = SPINLOCK_INITIALIZER;
+struct spinlock sbrk_lock = SPINLOCK_INITIALIZER;
 
 // range of entry indices controlled by VM
-unsigned first_page, last_page;
+unsigned last_page;
 unsigned nfreepages;
 unsigned next_free;     // next location for page allocation
 unsigned swapclock;     // next victim for page replacement
@@ -43,53 +43,28 @@ bool vm_initialized = false;
 void
 vm_bootstrap ()
 {
-    unsigned i;
-    paddr_t addr;
+    uint32_t i;
     
     spinlock_init(&coremap_lock);
     spinlock_init(&tlb_lock);
     global_lock = lock_create("global_lock");
-    
-//    cm_lock = lock_create("virtual memory");
-
-    // cannot open the swap file during startup
-    // open later when needed
-//    swfile.sw_vnode = NULL;
-
-    vm_initialized = true;
+    spinlock_init(&sbrk_lock);
 
     // compute the range of pages to be controlled by VM
-    addr = ram_getsize();
-    last_page = (addr >> PAGE_OFFSET_BITS);
-    
-    addr = ram_getfirstfree();
-    first_page = (addr >> PAGE_OFFSET_BITS);
-    next_free = swapclock = first_page;
-    nfreepages = last_page - first_page;
-    
-//    swfile.sw_first_page = swfile.sw_next_free = 0;
-//    swfile.sw_last_page = swfile.sw_nfreepages = NUM_SW_PAGES;
-    
-    // initialize the coremap
-    for (i=first_page; i<NUM_PPAGES; i++) {
-//        coremap.cm_ppmap[i] =  (i << PAGE_OFFSET_BITS);
-        coremap.cm_ppmap[i] = PP_FREE;
-    }
-    
-    // pages before first_page are fixed, never be evicted
-    for (i=0; i<first_page; i++) {
-        coremap.cm_ppmap[i] |= PP_FIXED;
-    }
-    
-    for (i=0; i<NUM_SW_PAGES; i++) {
-        // (i << PAGE_OFFSET_BITS) is the file location
-        coremap.cm_swapmap[i] = 0;
+    uint32_t ramsize = ram_getsize();
+    uint32_t num_entries = (ramsize - ram_stealmem(0)) / PAGE_SIZE;    
+    _coremap = kmalloc(num_entries * sizeof(uint32_t));
+
+    user_base_addr = ram_stealmem(0);
+    last_page = (ramsize - user_base_addr) / PAGE_SIZE;
+
+    next_free = swapclock = 0;
+    nfreepages = last_page;
+    vm_initialized = true;
+    for (i=0; i<last_page; i++) {
+        _coremap[i] = PP_FREE;    
     }
 }
-
-#define IS_PPAGE_USE(ppentry)       (ppentry & PP_USE)
-#define CLEAR_PPAGE_USE(ppentry)    (*ppentry & ~PP_USE)
-
 /*
  *  vm_tlbshootdown - Remove an entry from another CPU’s TLB address mapping
  *
@@ -127,7 +102,7 @@ acquire_pages (unsigned npages)
     unsigned nfree = 0;
     unsigned start = next_free;
     unsigned i, j;
-    ppagemap_t entry;
+    uint32_t entry;
     paddr_t ppage_addr = 0;
     bool acquired = spinlock_do_i_hold(&coremap_lock);
     
@@ -137,8 +112,8 @@ acquire_pages (unsigned npages)
     
 //    lock_acquire(cm_lock);
     
-    for (i=first_page; i<last_page; i++) {
-        entry = coremap.cm_ppmap[start];
+    for (i=0; i<last_page; i++) {
+        entry = _coremap[start];
         if (IS_PPAGE_FREE(entry)) {
             nfree++;
         }
@@ -149,7 +124,7 @@ acquire_pages (unsigned npages)
         if (start >= last_page) {
             // we don't support wrap around:
             // continous pages don't wrap around 
-            start = first_page;
+            start = 0;
             nfree = 0;
         }
 
@@ -164,17 +139,16 @@ acquire_pages (unsigned npages)
             for (j=0; j<npages; j++) {
                 start--;
                 if (j==0) {
-                    coremap.cm_ppmap[start] = (PP_ALLOC_END | PP_DIRTY | PP_USE | pid);
+                    _coremap[start] = (PP_ALLOC_END | PP_DIRTY | PP_USE | pid);
                     nfreepages--;
                 }
                 else {
-                    coremap.cm_ppmap[start] = (PP_DIRTY | PP_USE | pid);
+                    _coremap[start] = (PP_DIRTY | PP_USE | pid);
                     nfreepages--;
                 }
-//                kprintf("alloc_kpages %x\n", coremap.cm_ppmap[start]);
             }
             
-            ppage_addr = (paddr_t) (start << PAGE_OFFSET_BITS);
+            ppage_addr = (paddr_t) (user_base_addr + (start * PAGE_SIZE));
             break;
         }
     }
@@ -186,6 +160,52 @@ acquire_pages (unsigned npages)
     
 //    kprintf("alloc_kpages %d, %x\n", npages, ret);
     return ppage_addr;
+}
+
+static
+vaddr_t
+acquire_one_page (void)
+{
+    unsigned start = next_free;
+    unsigned i;
+    uint32_t cme;
+    pid_t pid = curproc->pid;
+    pid <<= 6;
+
+    bool acquired = spinlock_do_i_hold(&coremap_lock);
+    
+    if (!acquired) {
+        spinlock_acquire(&coremap_lock);
+    }
+    
+    for (i=0; i<last_page; i++) {
+        cme = _coremap[start];
+        if (IS_PPAGE_FREE(cme)) {
+            _coremap[start] = (PP_ALLOC_END | PP_DIRTY | PP_USE | pid);
+            nfreepages--;
+            
+            next_free = start + 1;
+            if (next_free >= last_page)
+                next_free = 0;
+                
+            break;
+        }
+
+        start++;
+        if (start >= last_page)
+            start = 0;
+    }
+    
+    if (start == last_page) {
+        // none free
+        start = 0;
+    }
+    
+    if (!acquired) {
+        spinlock_release(&coremap_lock);
+    }
+
+    return (user_base_addr + (start * PAGE_SIZE));
 }
 
 /*
@@ -203,7 +223,7 @@ alloc_kpages (unsigned npages)
         addr = ram_stealmem(npages);
     }
     else {
-        addr = acquire_pages(npages);
+        addr = (npages == 1) ? acquire_one_page() : acquire_pages(npages);
         
         struct addrspace *as = proc_getas();
         if (as != NULL) {
@@ -225,9 +245,15 @@ alloc_kpages (unsigned npages)
 void
 free_kpages (vaddr_t addr)
 {
-    unsigned entry_idx = (KVADDR_TO_PADDR(addr) & PAGE_FRAME) >> PAGE_OFFSET_BITS;
-    // KASSERT(entry_idx >= first_page && entry_idx < last_page);
-    KASSERT(entry_idx < last_page);
+//    unsigned entry_idx = (KVADDR_TO_PADDR(addr) & PAGE_FRAME) >> PAGE_OFFSET_BITS;
+//    KASSERT(entry_idx < last_page);
+    int32_t idx = ((KVADDR_TO_PADDR(addr) & PAGE_FRAME) - user_base_addr) / PAGE_SIZE;
+   if (idx < 0 || idx >= (int) last_page) {
+    //    kprintf("free_kpages %d\n", idx);
+       return;
+   }
+    // KASSERT(idx >= 0 && idx < (int32_t) last_page);
+    uint32_t entry_idx = idx;
     
 //    lock_acquire(cm_lock);
     bool acquired = spinlock_do_i_hold(&coremap_lock);
@@ -237,8 +263,8 @@ free_kpages (vaddr_t addr)
 
     bool done = false;
     do {    
-        done = IS_PPAGE_ALLOC_END(coremap.cm_ppmap[entry_idx]);
-        coremap.cm_ppmap[entry_idx] = PP_FREE;
+        done = IS_PPAGE_ALLOC_END(_coremap[entry_idx]);
+        _coremap[entry_idx] = PP_FREE;
         entry_idx++;
         nfreepages++;
     }
@@ -250,6 +276,50 @@ free_kpages (vaddr_t addr)
     
 //    lock_release(cm_lock);
 
+}
+
+int
+duplicate_pagetable(struct pagetable* from, struct pagetable *to)
+{
+    KASSERT(from != NULL);
+    KASSERT(to != NULL);
+//    bool acquired = spinlock_do_i_hold(&coremap_lock);
+//    if (!acquired)
+//        spinlock_acquire(&coremap_lock);
+
+    paddr_t paddr_from;
+    paddr_t paddr_to;
+    paddr_t cmidx_from;
+    paddr_t cmidx_to;
+    
+    unsigned i;
+    for (i=0; i<NUM_PTE; i++) {
+        if (from->pt_entries[i] != 0) {
+            paddr_from = (from->pt_entries[i] & PAGE_FRAME);
+            cmidx_from = (from->pt_entries[i] - user_base_addr) / PAGE_SIZE;
+            if (cmidx_from >= last_page) {
+                continue;
+            }
+            
+            paddr_to = acquire_one_page();
+            paddr_to &= PAGE_FRAME;
+            if (paddr_to == 0) {
+                // no memory
+                kprintf("no memery\n");
+                return ENOMEM;
+            }
+
+            // copy the page content to the new page
+            memcpy((void*) KVADDR_TO_PADDR(paddr_to), (const void*) KVADDR_TO_PADDR(paddr_from), PAGE_SIZE);
+            
+            to->pt_entries[i] = (paddr_to | (from->pt_entries[i] & 0xFFF));
+            cmidx_to = (paddr_to - user_base_addr) / PAGE_SIZE;
+            _coremap[cmidx_to] = _coremap[cmidx_from];
+        }
+    }
+//    if (!acquired)
+//        spinlock_release(&coremap_lock);
+    return 0;
 }
 
 /*
@@ -285,17 +355,20 @@ vm_fault (int faulttype, vaddr_t faultaddress)
 		return EFAULT;
 	}
 
+    lock_acquire(global_lock);
    	as = proc_getas();
 	if (as == NULL) {
 		//
 		// No address space set up. This is probably also a
 		// kernel fault early in boot.
 		//
+        lock_release(global_lock);
 		return EFAULT;
 	}
 	
 	// check if the faultaddress within userspace
 	if (!as_is_valid_address(as, faultaddress)) {
+        lock_release(global_lock);	
 	    return SIGSEGV;
 	}
 	
@@ -303,8 +376,7 @@ vm_fault (int faulttype, vaddr_t faultaddress)
 //        do_page_replacement();
     }
 
-    faultaddress &= PAGE_FRAME;
-//    lock_acquire(global_lock);    
+    faultaddress &= PAGE_FRAME;  
 
     int err;
     pagetable_t pt_entry;
@@ -314,15 +386,38 @@ vm_fault (int faulttype, vaddr_t faultaddress)
         spinlock_acquire(&coremap_lock);
     }
 
+    bool as_acquired = spinlock_do_i_hold(&as->as_lock);
+    if (!as_acquired) {
+        spinlock_acquire(&as->as_lock);
+    }
+
     err = as_get_pt_entry(as, faultaddress, &pt_entry);
     if (err) {
+        if (!as_acquired) {
+            spinlock_release(&as->as_lock);
+        }
+        
+        if (!acquired) {
+            spinlock_release(&coremap_lock);
+        }
+   		lock_release(global_lock);
+    
         return err;
     }
     
     if (pt_entry == 0) {
         
-        paddr_t ppage = acquire_pages(1);
+        paddr_t ppage = acquire_one_page();
         if (ppage == 0) {
+            if (!as_acquired) {
+                spinlock_release(&as->as_lock);
+            }
+        
+            if (!acquired) {
+                spinlock_release(&coremap_lock);
+            }
+            
+       		lock_release(global_lock);
             return ENOMEM;
         }
         
@@ -332,22 +427,13 @@ vm_fault (int faulttype, vaddr_t faultaddress)
         pt_entry = ((ppage & PAGE_FRAME) | PT_PRESENT_MASK | PT_DIRTY_MASK);
         as_set_pt_entry(as, faultaddress, pt_entry);
         
-        unsigned cmidx = ((ppage & PAGE_FRAME) >> PAGE_OFFSET_BITS);
-        coremap.cm_ppmap[cmidx] |= (faultaddress);
-        
+        unsigned cmidx = ((ppage & PAGE_FRAME) - user_base_addr) / PAGE_SIZE;
+        _coremap[cmidx] |= (faultaddress);
 
-        // for testing        
-        //pagetable_t pt_entry2;
-        //as_get_pt_entry(as, faultaddress, &pt_entry2);
-        //KASSERT(pt_entry == pt_entry2);
     }
     else {
         pt_entry = (pt_entry & PAGE_FRAME) | PT_PRESENT_MASK | PT_USED_MASK;
         as_set_pt_entry(as, faultaddress, pt_entry);
-    }
-    
-    if (!acquired) {
-        spinlock_release(&coremap_lock);
     }
 
     uint32_t entryhi, entrylo;
@@ -368,6 +454,7 @@ vm_fault (int faulttype, vaddr_t faultaddress)
             entrylo = (pt_entry & PAGE_FRAME) | TLBLO_VALID | TLBLO_DIRTY;
         }
         else {
+            lock_release(global_lock);
             return EPERM;
         }
     }
@@ -380,26 +467,15 @@ vm_fault (int faulttype, vaddr_t faultaddress)
         }
     }
     
-//   	struct _dbg dbg;
-//    dbg.ehi = (vaddr_t) entryhi;
-//    dbg.elo = (vaddr_t) entrylo;
-//    dbg.faultpage = (vaddr_t) faultaddress;
-//    dbg.page_entry = (vaddr_t) pt_entry;
-//    dbg.occupied = occupied;
-    
-//    KASSERT(dbg.faultpage);
+    if (!acquired) {
+        spinlock_release(&coremap_lock);
+    }
         
- 
-      spinlock_acquire(&tlb_lock);
-    
-/*    
-if (faultaddress == 0x400000) {
-        uint32_t tlbHi, tlbLo;
-        if (get_tlb_value(faultaddress, &tlbHi, &tlbLo)) {
-            KASSERT(faultaddress == 0x400000);
-        }
-    } 
-*/
+    if (!as_acquired) {
+        spinlock_release(&as->as_lock);
+    }
+
+    spinlock_acquire(&tlb_lock);
     
     int spl = splhigh();
     uint32_t idx;
@@ -420,32 +496,20 @@ if (faultaddress == 0x400000) {
 
     splx(spl);
 
-/*    
-    if (faultaddress == 0x400000) {
-        uint32_t tlbHi, tlbLo;
-        if (get_tlb_value(faultaddress, &tlbHi, &tlbLo)) {
-            KASSERT(faultaddress == 0x400000);
-        }
-    }
-*/    
-    
-//    if (!acquired) {
-        spinlock_release(&tlb_lock);
-    //}
-  //  lock_release(global_lock);
+
+    spinlock_release(&tlb_lock);
+    lock_release(global_lock);
     return 0;
 }
 
 int 
 alloc_sbrk_pages(unsigned npages)
 {
-    lock_acquire(global_lock);
     struct addrspace *as = proc_getas();
     vaddr_t vaddr;
     unsigned i;
-    vaddr_t heap_top = as->as_heap_top;
     pagetable_t pte;
-    ppagemap_t ppe;
+    uint32_t ppe;
     paddr_t cmidx;
     pid_t pid = curproc->pid << 6;
     bool acquired = spinlock_do_i_hold(&coremap_lock);
@@ -453,15 +517,25 @@ alloc_sbrk_pages(unsigned npages)
     if (!acquired) {    
         spinlock_acquire(&coremap_lock);
     }
+    
+    bool as_acquired = spinlock_do_i_hold(&as->as_lock);
+    
+    if (!as_acquired) {
+        spinlock_acquire(&as->as_lock);
+    }
+    
+    vaddr_t heap_top = as->as_heap_top;
+
     if (nfreepages > npages) {
         for (i=0; i<npages; i++) {
-            vaddr = acquire_pages(1);
+            //vaddr = acquire_pages(1);
+            vaddr = acquire_one_page();
             pte = ((vaddr & PAGE_FRAME) | PT_PRESENT_MASK | PT_DIRTY_MASK);
-            cmidx = (vaddr & PAGE_FRAME) >> PAGE_OFFSET_BITS;
+            cmidx = ((vaddr & PAGE_FRAME) - user_base_addr) / PAGE_SIZE;
 
             // set the coremap entry
             ppe = ((heap_top & PAGE_FRAME) | PP_ALLOC_END | PP_DIRTY | PP_USE | pid);
-            coremap.cm_ppmap[cmidx] = ppe;            
+            _coremap[cmidx] = ppe;
     
             // set the pagetable entry, create pagetable when needed
             as_set_pt_entry(as, heap_top, pte);
@@ -471,14 +545,18 @@ alloc_sbrk_pages(unsigned npages)
             heap_top += PAGE_SIZE;
         }
     }
+
+    as->as_heap_top = heap_top;
+   
+    if (!as_acquired) {
+        spinlock_release(&as->as_lock);
+    }
     
     if (!acquired) {
         spinlock_release(&coremap_lock);
     }
         
-    as->as_heap_top = heap_top;
-    
-    lock_release(global_lock);
+    vm_tlbinvalidate();
     return 0;
 }
 
@@ -489,14 +567,17 @@ free_sbrk_pages(unsigned npages)
     struct addrspace *as = proc_getas();
     vaddr_t heap_top;
     pagetable_t pte;
-    ppagemap_t ppe;
+    uint32_t ppe;
     paddr_t cmidx;
-    
-    lock_acquire(global_lock);
     
     bool acquired = spinlock_do_i_hold(&coremap_lock);
     if (!acquired) {    
         spinlock_acquire(&coremap_lock);
+    }
+
+    bool as_acquired = spinlock_do_i_hold(&as->as_lock);
+    if (!as_acquired) {
+        spinlock_acquire(&as->as_lock);
     }
     
     if (npages > 0) {
@@ -505,11 +586,11 @@ free_sbrk_pages(unsigned npages)
         
         for (i=0; i<npages; i++) {
             as_get_pt_entry(as, heap_top, &pte);
-            cmidx = (pte & PAGE_FRAME) >> PAGE_OFFSET_BITS;
+            cmidx = ((pte & PAGE_FRAME) - user_base_addr) / PAGE_SIZE;
 
             // set the coremap entry
             ppe = PP_FREE;
-            coremap.cm_ppmap[cmidx] = ppe;            
+            _coremap[cmidx] = ppe;
     
             // set the pagetable entry
             as_set_pt_entry(as, heap_top, 0);
@@ -518,12 +599,13 @@ free_sbrk_pages(unsigned npages)
             heap_top += PAGE_SIZE;
         }
     }
+    if (!as_acquired) {
+        spinlock_release(&as->as_lock);
+    }
+    
     if (!acquired) {    
         spinlock_release(&coremap_lock);
     }
-
-    
-    lock_release(global_lock);
     
     return 0;
 }
