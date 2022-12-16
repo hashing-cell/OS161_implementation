@@ -40,7 +40,11 @@
 #include <machine/vm.h>
 
 struct pagetable;
-typedef uint32_t       swapmap_t;
+struct swapentries {
+    vaddr_t addr;
+    pid_t pid;
+    bool in_use;
+};
 
 // max physical RAM = 16MB
 #define RAM_MAX             (16 * 1024 * 1024)
@@ -104,6 +108,10 @@ struct coremap {
 #define VM_FAULT_WRITE       1    /* A write was attempted */
 #define VM_FAULT_READONLY    2    /* A write to a readonly page was attempted*/
 
+#define NO_SWAP_IDX 0xFFFFFFFF
+
+#define SWAPIN_NOT_FOUND 1;
+#define SWAPIN_NO_MEM 2;
 
 /* Initialization function */
 void vm_bootstrap(void);
@@ -122,5 +130,10 @@ int duplicate_pagetable(struct pagetable* from, struct pagetable *to);
 void vm_tlbshootdown_all(void);
 void vm_tlbshootdown(const struct tlbshootdown *);
 void vm_tlbinvalidate(void);
+
+void remove_swap_entry(vaddr_t addr, pid_t pid);
+void swapout(void);
+int swapin(vaddr_t addr, pid_t pid);
+
 
 #endif /* _VM_H_ */

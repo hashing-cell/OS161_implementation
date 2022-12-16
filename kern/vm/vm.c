@@ -22,7 +22,7 @@
 struct coremap coremap;
 uint32_t user_base_addr;
 uint32_t* _coremap;
-uint32_t* _swapmap;
+struct swapentries * _swapmap;
 
 struct lock *global_lock;
 struct spinlock coremap_lock = SPINLOCK_INITIALIZER;
@@ -35,7 +35,8 @@ unsigned nfreepages;
 unsigned next_free;     // next location for page allocation
 
 struct vnode *swap_vnode;
-const char swap_file[] = "lhd0raw:";
+struct spinlock swapmap_lock = SPINLOCK_INITIALIZER;
+char swap_file[] = "lhd0raw:";
 unsigned swapclock;     // next victim for page replacement
 unsigned swap_base;
 unsigned swap_last_page; 
@@ -55,6 +56,7 @@ vm_bootstrap ()
     spinlock_init(&tlb_lock);
     global_lock = lock_create("global_lock");
     spinlock_init(&sbrk_lock);
+    spinlock_init(&swapmap_lock);
 
     // compute the range of pages to be controlled by VM
     uint32_t ramsize = ram_getsize();
@@ -77,9 +79,12 @@ vm_bootstrap ()
         panic("Error openning swapfile\n");
     }
     swap_base = last_page;
-    _swapmap = kmalloc(NUM_SW_PAGES * sizeof(uint32_t));
+    _swapmap = kmalloc(NUM_SW_PAGES * sizeof(struct swapentries));
+    for (unsigned i = 0; i < NUM_SW_PAGES; i++) {
+        _swapmap[i].in_use = false;
+    }
 }
-/*
+/*_
  *  vm_tlbshootdown - Remove an entry from another CPU’s TLB address mapping
  *
  */
@@ -625,32 +630,88 @@ free_sbrk_pages(unsigned npages)
 }
 
 static
-uint32_t
-get_swap_idx(void)
+unsigned
+get_free_swap_idx(void)
 {
     // Incomplete - need a way to map existing physical pages to swap memory, and virtual addresses to swap memory somehow
     //
-    uint32_t page;
-    for (uint32_t i = 0; i < NUM_SW_PAGES; i++) {
-        page = _swapmap[i];
-        if (IS_PPAGE_FREE(page)) {
+    bool acquired = spinlock_do_i_hold(&swapmap_lock);
+    if (!acquired) {    
+        spinlock_acquire(&swapmap_lock);
+    }
+    for (unsigned i = 0; i < NUM_SW_PAGES; i++) {
+        if (!_swapmap[i].in_use) {
+            if (!acquired) {    
+                spinlock_release(&swapmap_lock);
+            }
             return i;
         }
     }
 
     // We ran out of swap space
-    kprintf("No more swap space");
-    return 0xFFFFFFFF;
+    kprintf("No more swap space\n");
+    if (!acquired) {    
+        spinlock_release(&swapmap_lock);
+    }
+    return NO_SWAP_IDX;
 }
 
-
-// Swapout a page to disk
-void
-swapout()
+static
+unsigned
+find_swap_idx(vaddr_t addr, pid_t pid)
 {
+    bool acquired = spinlock_do_i_hold(&swapmap_lock);
+    if (!acquired) {    
+        spinlock_acquire(&swapmap_lock);
+    }
+    for (unsigned i = 0; i < NUM_SW_PAGES; i++) {
+        if (_swapmap[i].pid == pid && _swapmap[i].addr == addr && _swapmap[i].in_use) {
+            if (!acquired) {    
+                spinlock_release(&swapmap_lock);
+            }
+            return i;
+        }
+    }
+
+    kprintf("Page not found in swap\n");
+    if (!acquired) {    
+        spinlock_release(&swapmap_lock);
+    }
+    return NO_SWAP_IDX;
+}
+
+void
+remove_swap_entry(vaddr_t addr, pid_t pid)
+{
+    bool acquired = spinlock_do_i_hold(&swapmap_lock);
+    if (!acquired) {    
+        spinlock_acquire(&swapmap_lock);
+    }
+    for (unsigned i = 0; i < NUM_SW_PAGES; i++) {
+        if (_swapmap[i].pid == pid && _swapmap[i].addr == addr && _swapmap[i].in_use) {
+            _swapmap[i].in_use = false;
+            if (!acquired) {    
+                spinlock_release(&swapmap_lock);
+            }
+            return;
+        }
+    }
+
+    kprintf("Page not found in swap\n");
+    if (!acquired) {    
+        spinlock_release(&swapmap_lock);
+    }
+    return;
+}
+
+// Swapout a page to disk according to swapclock
+void
+swapout(void)
+{
+    int result; 
     unsigned i = swapclock + 1;
     if (i >= last_page) {
-        i = 0; 
+        i = 0;
     }
 
     while (i != swapclock) {
@@ -663,20 +724,30 @@ swapout()
             goto nextpage;
         }
 
-        uint32_t swap_idx = get_swap_idx();
+        unsigned swap_idx = get_free_swap_idx();
 
-        struct iocev iov;
+        struct iovec iov;
         struct uio ku;
 
-        // TODO - figure out how to either directly access physical memory, or translate physical page to virtual address before accessing
-        uio_kinit(&iov, &ku, (void *)_coremap[i], PAGE_SIZE, (off_t) swap_idx, UIO_WRITE);
+        // NOT CORRECT - figure out how to either directly access physical memory, or translate physical page to virtual address before accessing
+        uio_kinit(&iov, &ku, (void *)_coremap[i], PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_WRITE);
         spinlock_release(&coremap_lock);
         
-        VOP_WRITE(swap_vnode, &ku);
+        result = VOP_WRITE(swap_vnode, &ku);
+        if (result) {
+            panic("ERROR writing to swap diskn\n");
+        }
 
         spinlock_acquire(&coremap_lock);
+        spinlock_acquire(&swapmap_lock);
         _coremap[i] = PP_FREE;
         nfreepages++;
+        _swapmap[swap_idx].in_use = true;
+        _swapmap[swap_idx].addr = _coremap[i]; // NOT CORRECT, need to somehow get the virtual address of the corresponding physical page
+        _swapmap[swap_idx].pid = _coremap[i]; // NOT CORRECT, somehow get the pid from the physical page
+
+        // Should invalidate that specific entry in TLB here
+        spinlock_release(&swapmap_lock);
         spinlock_release(&coremap_lock);
         break;
 
@@ -686,50 +757,54 @@ swapout()
             i = 0; 
         }
     }
+
+    swapclock++;
 }
 
-void 
-swapin(uint32_t page)
+int 
+swapin(vaddr_t addr, pid_t pid)
 {
     if (nfreepages == 0) {
-        kprintf("No free physical pages - cannot swapin");
-        return;
+        kprintf("No free physical pages - cannot swapin\n");
+        return SWAPIN_NO_MEM;
+    }
+    struct iovec iov;
+    struct uio ku;
+    unsigned start = next_free;
+
+    unsigned swap_idx = find_swap_idx(addr, pid);
+    if (swap_idx == NO_SWAP_IDX) {
+        kprintf("Address of this process not found in swap\n");
+        return SWAPIN_NOT_FOUND;
     }
 
-    unsigned start = next_free;
     spinlock_acquire(&coremap_lock);
 
-    for (unsigned i=0; i < last_page; i++) {
+    //find a free page in physical memory
+    for (unsigned i = 0; i < last_page; i++) {
         if (IS_PPAGE_FREE(_coremap[start])) {
-            _coremap[start] = (PP_ALLOC_END | PP_DIRTY | PP_USE | pid);
+            _coremap[start] = (PP_ALLOC_END | PP_CLEAN | PP_USE | pid);
             nfreepages--;
-
-            struct iocev iov;
-            struct uio ku;
-
-            uint32_t swap_idx = get_swap_idx();
-
-            // TODO - figure out how to access correct swap offset and select correct memory
-            uio_kinit(&iov, &ku, (void *)_coremap[start], PAGE_SIZE, (off_t) swap_idx, UIO_READ);
-            spinlock_release(&coremap_lock);
-            
-            VOP_READ(swap_vnode, &ku);
-
-            spinlock_acquire(&coremap_lock);
-            _coremap[start] |= PP_CLEAN;
-            
-
-            next_free = start + 1;
-            if (next_free >= last_page)
-                next_free = 0;
-                
             break;
         }
-
         start++;
         if (start >= last_page)
             start = 0;
     }
-    
+
+
+    // TODO - figure out how to access correct swap offset and select correct memory
+    uio_kinit(&iov, &ku, (void *)addr, PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_READ);
+
     spinlock_release(&coremap_lock);
+    
+    VOP_READ(swap_vnode, &ku);
+
+    spinlock_acquire(&coremap_lock);
+    next_free = start + 1;
+    if (next_free >= last_page)
+        next_free = 0;
+    spinlock_release(&coremap_lock);
+
+    return 0;
 }
