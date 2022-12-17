@@ -678,7 +678,7 @@ find_swap_idx(paddr_t addr, pid_t pid)
         }
     }
 
-    kprintf("Page not found in swap\n");
+    //kprintf("Page not found in swap\n");
     if (!acquired) {    
         spinlock_release(&swapmap_lock);
     }
@@ -702,7 +702,7 @@ remove_swap_entry(vaddr_t addr, pid_t pid)
         }
     }
 
-    kprintf("Page not found in swap\n");
+    //kprintf("Page not found in swap\n");
     if (!acquired) {    
         spinlock_release(&swapmap_lock);
     }
@@ -720,12 +720,22 @@ swapout(void)
     }
 
     while (i != swapclock) {
-        spinlock_acquire(&coremap_lock);
+        bool acquired = spinlock_do_i_hold(&coremap_lock);
+        if (!acquired) {    
+            spinlock_acquire(&coremap_lock);
+        }
+
         if (IS_PPAGE_FIXED(_coremap[i])) {
+            if (!acquired) {    
+                spinlock_release(&coremap_lock);
+            }
             goto nextpage;
         }
 
         if (IS_PPAGE_FREE(_coremap[i])) {
+            if (!acquired) {    
+                spinlock_release(&coremap_lock);
+            }
             goto nextpage;
         }
 
@@ -737,24 +747,33 @@ swapout(void)
         struct uio ku;
 
         uio_kinit(&iov, &ku, (void *) PADDR_TO_KVADDR(paddr_from_page), PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_WRITE);
-        spinlock_release(&coremap_lock);
+
+        _coremap[i] = PP_FREE;
+        nfreepages++;
+
+        bool swaplk_acquired = spinlock_do_i_hold(&swapmap_lock);
+        if (!swaplk_acquired) {    
+            spinlock_acquire(&swapmap_lock);
+        }
+
+        _swapmap[swap_idx].in_use = true;
+        _swapmap[swap_idx].addr = user_base_addr + (i * PAGE_SIZE);
+        _swapmap[swap_idx].pid = (_coremap[i] & PP_PID_MASK) >> 6;
+
+        if (!swaplk_acquired) {    
+            spinlock_release(&swapmap_lock);
+        }
+        
+        if (!acquired) {    
+            spinlock_release(&coremap_lock);
+        }
         
         result = VOP_WRITE(swap_vnode, &ku);
         if (result) {
             panic("ERROR writing to swap diskn\n");
         }
 
-        spinlock_acquire(&coremap_lock);
-        spinlock_acquire(&swapmap_lock);
-        _coremap[i] = PP_FREE;
-        nfreepages++;
-        _swapmap[swap_idx].in_use = true;
-        _swapmap[swap_idx].addr = user_base_addr + (i * PAGE_SIZE);
-        _swapmap[swap_idx].pid = (_coremap[i] & PP_PID_MASK) >> 6;
-
         vm_tlbinvalidate();
-        spinlock_release(&swapmap_lock);
-        spinlock_release(&coremap_lock);
         break;
 
     nextpage:
@@ -787,7 +806,10 @@ swapin(vaddr_t addr, pid_t pid)
         return SWAPIN_NOT_FOUND;
     }
 
-    spinlock_acquire(&coremap_lock);
+    bool acquired = spinlock_do_i_hold(&coremap_lock);
+    if (!acquired) {    
+        spinlock_acquire(&coremap_lock);
+    }
 
     //find a free page in physical memory
     for (unsigned i = 0; i < last_page; i++) {
@@ -805,15 +827,15 @@ swapin(vaddr_t addr, pid_t pid)
     // TODO - figure out how to access correct swap offset and select correct memory
     uio_kinit(&iov, &ku, (void *) PADDR_TO_KVADDR(paddr), PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_READ);
 
-    spinlock_release(&coremap_lock);
-    
-    VOP_READ(swap_vnode, &ku);
-
-    spinlock_acquire(&coremap_lock);
     next_free = start + 1;
     if (next_free >= last_page)
         next_free = 0;
-    spinlock_release(&coremap_lock);
+
+    if (!acquired) {    
+        spinlock_release(&coremap_lock);
+    }
+    
+    VOP_READ(swap_vnode, &ku);
 
     return 0;
 }
