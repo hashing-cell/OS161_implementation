@@ -349,6 +349,7 @@ int
 vm_fault (int faulttype, vaddr_t faultaddress)
 {
     struct addrspace *as;
+    pid_t pid = curproc->pid;
     
     switch (faulttype) {
         case VM_FAULT_READONLY:
@@ -392,7 +393,7 @@ vm_fault (int faulttype, vaddr_t faultaddress)
 	}
 	
     if (nfreepages <= MIN_FREE_PAGES) {	
-//        do_page_replacement();
+        swapout();
     }
 
     faultaddress &= PAGE_FRAME;  
@@ -424,6 +425,11 @@ vm_fault (int faulttype, vaddr_t faultaddress)
         return err;
     }
     
+    err = swapin(faultaddress, pid);
+    if (err == SWAPIN_NO_MEM) {
+        panic("We did a swap out earlier...");
+    }
+
     if (pt_entry == 0) {
         
         paddr_t ppage = acquire_one_page();
@@ -456,7 +462,6 @@ vm_fault (int faulttype, vaddr_t faultaddress)
     }
 
     uint32_t entryhi, entrylo;
-    pid_t pid = curproc->pid;
     
     entryhi = faultaddress | pid << 6;
     
@@ -658,7 +663,7 @@ get_free_swap_idx(void)
 
 static
 unsigned
-find_swap_idx(vaddr_t addr, pid_t pid)
+find_swap_idx(paddr_t addr, pid_t pid)
 {
     bool acquired = spinlock_do_i_hold(&swapmap_lock);
     if (!acquired) {    
@@ -726,11 +731,12 @@ swapout(void)
 
         unsigned swap_idx = get_free_swap_idx();
 
+        paddr_t paddr_from_page = user_base_addr + (i * PAGE_SIZE);
+
         struct iovec iov;
         struct uio ku;
 
-        // NOT CORRECT - figure out how to either directly access physical memory, or translate physical page to virtual address before accessing
-        uio_kinit(&iov, &ku, (void *)_coremap[i], PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_WRITE);
+        uio_kinit(&iov, &ku, (void *) PADDR_TO_KVADDR(paddr_from_page), PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_WRITE);
         spinlock_release(&coremap_lock);
         
         result = VOP_WRITE(swap_vnode, &ku);
@@ -743,10 +749,10 @@ swapout(void)
         _coremap[i] = PP_FREE;
         nfreepages++;
         _swapmap[swap_idx].in_use = true;
-        _swapmap[swap_idx].addr = _coremap[i]; // NOT CORRECT, need to somehow get the virtual address of the corresponding physical page
-        _swapmap[swap_idx].pid = _coremap[i]; // NOT CORRECT, somehow get the pid from the physical page
+        _swapmap[swap_idx].addr = user_base_addr + (i * PAGE_SIZE);
+        _swapmap[swap_idx].pid = (_coremap[i] & PP_PID_MASK) >> 6;
 
-        // Should invalidate that specific entry in TLB here
+        vm_tlbinvalidate();
         spinlock_release(&swapmap_lock);
         spinlock_release(&coremap_lock);
         break;
@@ -772,9 +778,12 @@ swapin(vaddr_t addr, pid_t pid)
     struct uio ku;
     unsigned start = next_free;
 
-    unsigned swap_idx = find_swap_idx(addr, pid);
+    paddr_t paddr = ((KVADDR_TO_PADDR(addr) & PAGE_FRAME) - user_base_addr) / PAGE_SIZE; 
+
+    unsigned swap_idx = find_swap_idx(paddr, pid);
     if (swap_idx == NO_SWAP_IDX) {
-        kprintf("Address of this process not found in swap\n");
+        //kprintf("Address of this process not found in swap\n");
+        // Not in swap
         return SWAPIN_NOT_FOUND;
     }
 
@@ -794,7 +803,7 @@ swapin(vaddr_t addr, pid_t pid)
 
 
     // TODO - figure out how to access correct swap offset and select correct memory
-    uio_kinit(&iov, &ku, (void *)addr, PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_READ);
+    uio_kinit(&iov, &ku, (void *) PADDR_TO_KVADDR(paddr), PAGE_SIZE, (off_t) swap_idx * PAGE_SIZE, UIO_READ);
 
     spinlock_release(&coremap_lock);
     

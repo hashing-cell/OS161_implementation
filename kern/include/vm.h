@@ -41,7 +41,7 @@
 
 struct pagetable;
 struct swapentries {
-    vaddr_t addr;
+    paddr_t addr;
     pid_t pid;
     bool in_use;
 };
@@ -110,8 +110,8 @@ struct coremap {
 
 #define NO_SWAP_IDX 0xFFFFFFFF
 
-#define SWAPIN_NOT_FOUND 1;
-#define SWAPIN_NO_MEM 2;
+#define SWAPIN_NOT_FOUND 1
+#define SWAPIN_NO_MEM 2
 
 /* Initialization function */
 void vm_bootstrap(void);
