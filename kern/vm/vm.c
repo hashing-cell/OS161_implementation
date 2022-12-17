@@ -19,7 +19,6 @@
 
 
 // declare a global coremap
-struct coremap coremap;
 uint32_t user_base_addr;
 uint32_t* _coremap;
 struct swapentries * _swapmap;

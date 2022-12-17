@@ -50,7 +50,7 @@ struct swapentries {
 #define RAM_MAX             (16 * 1024 * 1024)
 // 2M for now, maybe physical memory + swap size when swapping is implemented
 #define MAX_HEAP            (3 * 1024 * 1024)
-#define SWAP_SIZE           (5 * 1024 * 1024)
+#define SWAP_SIZE           (2 * 1024 * 1024)
 
 // total number of ppages = 4096
 #define NUM_PPAGES          (RAM_MAX / PAGE_SIZE)
@@ -97,11 +97,6 @@ struct swapentries {
 #define CLEAR_PPAGE_USE(ppentry)    (*ppentry & ~PP_USE)
 
 #define IS_PPAGE_ALLOC_END(ppage)   (ppage & PP_ALLOC_END_MASK)
-
-struct coremap {
-//    ppagemap_t cm_ppmap[NUM_PPAGES];
-//    uint32_t    *cm_ppmap;
-};
 
 /* Fault-type arguments to vm_fault() */
 #define VM_FAULT_READ        0    /* A read was attempted */
