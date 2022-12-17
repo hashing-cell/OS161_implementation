@@ -17,6 +17,8 @@
 #include <uio.h>
 #include <vnode.h>
 
+#define SWAP 0
+
 
 // declare a global coremap
 uint32_t user_base_addr;
@@ -72,7 +74,7 @@ vm_bootstrap ()
         _coremap[i] = PP_FREE;    
     }
 
-
+#if SWAP
     //Initialize swap stuff
     if (vfs_open(swap_file, O_RDWR, 0, &swap_vnode)) {
         panic("Error openning swapfile\n");
@@ -82,6 +84,7 @@ vm_bootstrap ()
     for (unsigned i = 0; i < NUM_SW_PAGES; i++) {
         _swapmap[i].in_use = false;
     }
+#endif
 }
 /*_
  *  vm_tlbshootdown - Remove an entry from another CPU’s TLB address mapping
@@ -391,9 +394,11 @@ vm_fault (int faulttype, vaddr_t faultaddress)
 	    return SIGSEGV;
 	}
 	
+#if SWAP
     if (nfreepages <= MIN_FREE_PAGES) {	
         swapout();
     }
+#endif
 
     faultaddress &= PAGE_FRAME;  
 
@@ -424,10 +429,13 @@ vm_fault (int faulttype, vaddr_t faultaddress)
         return err;
     }
     
+
+#if SWAP
     err = swapin(faultaddress, pid);
     if (err == SWAPIN_NO_MEM) {
         panic("We did a swap out earlier...");
     }
+#endif
 
     if (pt_entry == 0) {
         
@@ -633,6 +641,7 @@ free_sbrk_pages(unsigned npages)
     return 0;
 }
 
+#if SWAP
 static
 unsigned
 get_free_swap_idx(void)
@@ -838,3 +847,4 @@ swapin(vaddr_t addr, pid_t pid)
 
     return 0;
 }
+#endif
